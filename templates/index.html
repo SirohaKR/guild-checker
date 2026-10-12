@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>이중길드 검사기</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍁</text></svg>">
+  <script>
+    // 깜빡임 없이 저장된 테마 먼저 적용
+    try { const t = localStorage.getItem("gc_theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="leaf">🍁</span>이중길드 <b>검사기</b></div>
+  <nav>
+    <a href="#check" data-view="check" class="on">검사</a>
+    <a href="#history" data-view="history">지난 기록</a>
+  </nav>
+  <button class="theme-btn" id="themeBtn" type="button" title="라이트/다크 전환"></button>
+</header>
+
+<main>
+  <!-- 검사 화면 -->
+  <section id="view-check">
+    <form id="scanForm" class="card form-card">
+      <div class="form-grid">
+        <label class="span2">넥슨 API 키
+          <div class="key-row">
+            <input id="apiKey" type="password" autocomplete="off" placeholder="test_… 또는 live_…" required>
+            <button type="button" id="keyShow" class="ghost" title="키 보기">보기</button>
+          </div>
+        </label>
+        <label>월드
+          <select id="world">
+            {% for w in worlds %}<option>{{ w }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>길드 이름
+          <input id="guild" placeholder="예: 단풍잎" required>
+        </label>
+        <label>역방향 검사
+          <select id="reverse">
+            <option value="0">끔 (우리 길드만)</option>
+            <option value="50">길드 랭킹 상위 50개</option>
+            <option value="200">상위 200개</option>
+            <option value="1000">상위 1000개</option>
+            <option value="-1">전체 길드 (오래 걸림)</option>
+          </select>
+        </label>
+        <label class="check-label"><input type="checkbox" id="activity"> 30일 성장 확인</label>
+        <button class="primary big" id="scanBtn" type="submit">검사</button>
+      </div>
+      <p class="hint">API 키는 <b>어디에도 저장되지 않아요</b>. 검사할 때만 서버로 보내고, 검사가 끝나면 바로 버려요 (매번 입력).
+        역방향은 “본캐는 우리 길드, 부캐는 다른 길드”를 찾으려고 다른 길드원까지 확인해요.</p>
+    </form>
+
+    <div id="progress" class="card progress" hidden></div>
+    <div id="result"></div>
+  </section>
+
+  <!-- 지난 기록 -->
+  <section id="view-history" hidden>
+    <h2>지난 검사 기록</h2>
+    <div id="historyList" class="history-grid"></div>
+  </section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

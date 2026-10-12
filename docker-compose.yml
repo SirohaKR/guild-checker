@@ -1,0 +1,15 @@
+services:
+  guild-checker:
+    build: .
+    container_name: guild-checker
+    restart: unless-stopped
+    environment:
+      - DB_PATH=/app/data/guild.db
+      - TZ=Asia/Seoul
+      # - WORKERS=8        # 넥슨 API를 동시에 몇 개씩 부를지
+      # - REP_TTL_DAYS=3   # 유니온 대표 캐릭터 결과를 며칠 동안 다시 쓸지
+    ports:
+      - "5080:5000"
+    volumes:
+      # SQLite DB (캐시·지난 검사 결과) — 컨테이너를 다시 빌드해도 남는다
+      - ./data:/app/data
