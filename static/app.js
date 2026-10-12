@@ -40,10 +40,16 @@ paintThemeBtn();
 
 // ── 화면 전환 ──
 function showView() {
-  const v = location.hash === "#history" ? "history" : "check";
+  const v = { "#history": "history", "#lookup": "lookup" }[location.hash] || "check";
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.view === v));
   $("#view-check").hidden = v !== "check";
+  $("#view-lookup").hidden = v !== "lookup";
   $("#view-history").hidden = v !== "history";
+  if (v === "lookup") {
+    // 검사 화면에서 넣은 키·월드를 이 화면에서도 쓰게 (메모리에서만, 저장 안 함)
+    if (!$("#lkKey").value) $("#lkKey").value = $("#apiKey").value;
+    if (!$("#lkWorld").dataset.touched) $("#lkWorld").value = $("#world").value;
+  }
   if (v === "history") loadHistory();
 }
 window.addEventListener("hashchange", showView);
@@ -321,3 +327,58 @@ async function loadHistory() {
   }
   renderResult();
 })();
+
+// ── 이름 조회 ──
+$("#lkWorld").onchange = () => ($("#lkWorld").dataset.touched = "1");
+$("#lookupForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const btn = $("#lkBtn");
+  btn.disabled = true;
+  btn.textContent = "조회 중…";
+  try {
+    const r = await api("/api/lookup", {
+      method: "POST",
+      body: JSON.stringify({ api_key: $("#lkKey").value.trim(), world: $("#lkWorld").value, names: $("#lkNames").value }),
+    });
+    renderLookup(r);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "조회";
+  }
+};
+
+function lookupCard(r) {
+  if (!r.found) {
+    return `<article class="acc"><div class="main">${avatar(null)}<div class="who"><div class="name">${esc(r.name)}</div>
+      <div class="sub">${esc(r.reason)}</div></div></div></article>`;
+  }
+  const c = r.char, p = r.rep;
+  const g = (x) => (x ? `「${esc(x)}」` : "길드 없음");
+  const badges = [];
+  if (!p) badges.push(`<span class="badge gold">${esc(r.reason || "대표 캐릭터를 알 수 없음")}</span>`);
+  else if (r.is_rep) badges.push(`<span class="badge ok">이 캐릭터가 대표(본캐)</span>`);
+  else if (r.dual) badges.push(`<span class="badge dual">대표는 ${g(p.guild)} 길드</span>`);
+  else if (p.guild === c.guild && c.guild) badges.push(`<span class="badge ok">대표와 같은 길드</span>`);
+  else badges.push(`<span class="badge gold">대표 ${g(p.guild)}</span>`);
+  if (r.union_level) badges.push(`<span class="badge acc-c">유니온 ${Number(r.union_level).toLocaleString()}</span>`);
+  if (c.access === "false") badges.push(`<span class="badge sky">7일 미접속</span>`);
+  const same = r.same_account && r.same_account.length
+    ? `<div class="ttl" style="margin-top:10px">넣은 이름 중 같은 계정</div><div class="sub">${r.same_account.map(esc).join(", ")}</div>` : "";
+  return `<article class="acc ${r.dual ? "is-dual" : ""}">
+    ${r.dual ? `<div class="flag">⚠ 이중길드 <span>— 이 캐릭터는 ${g(c.guild)}, 대표(본캐)는 ${g(p.guild)}</span></div>` : ""}
+    <div class="main">${avatar(c)}
+      <div class="who"><div class="sub">조회한 캐릭터 · ${g(c.guild)}</div><div class="name">${esc(c.name)}</div>
+        <div class="sub">${esc(lvjob(c))}</div><div class="badges">${badges.join("")}</div></div></div>
+    ${p && !r.is_rep ? `<div class="alts"><div class="ttl">유니온 대표 캐릭터</div>
+      <div class="chars">${charChip(p, r.dual)}</div>${same}</div>` : same ? `<div class="alts">${same}</div>` : ""}
+  </article>`;
+}
+
+function renderLookup(res) {
+  const dual = res.results.filter((r) => r.dual).length;
+  $("#lookupResult").innerHTML = `
+    <div class="sub" style="margin:4px 2px 12px">${esc(res.world)} · ${esc(res.date)} 기준 · ${res.results.length}명 조회${dual ? ` · <b style="color:var(--warn)">이중길드 ${dual}명</b>` : ""}</div>
+    <div class="acc-grid">${res.results.map(lookupCard).join("")}</div>`;
+}

@@ -60,6 +60,28 @@ def start_scan():
     return jsonify(job.to_dict())
 
 
+@app.post("/api/lookup")
+def lookup():
+    """이름으로 그 사람 조회 (몇 명뿐이라 바로 처리). API 키는 이 요청 안에서만 쓰고 버린다."""
+    body = request.get_json(silent=True) or {}
+    key = (body.get("api_key") or "").strip()
+    world = body.get("world")
+    names = [n.strip() for n in str(body.get("names") or "").replace(",", "\n").splitlines() if n.strip()]
+    names = list(dict.fromkeys(names))
+    if not key:
+        return err("넥슨 API 키를 넣어 주세요.")
+    if world not in checker.WORLDS:
+        return err("월드를 골라 주세요.")
+    if not names:
+        return err("조회할 캐릭터 이름을 넣어 주세요.")
+    if len(names) > checker.LOOKUP_MAX:
+        return err(f"한 번에 {checker.LOOKUP_MAX}명까지 조회할 수 있어요.")
+    try:
+        return jsonify(checker.lookup(nexon.Client(key), store, world, names))
+    except nexon.NexonError as e:
+        return err(str(e), 502)
+
+
 def run_job(job, key, world, guild, options):
     try:
         client = nexon.Client(key)
