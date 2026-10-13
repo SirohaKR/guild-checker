@@ -343,7 +343,7 @@ async function runLookup() {
     toast(err.message, true);
   } finally {
     btn.disabled = false;
-    btn.textContent = "조회";
+    btn.textContent = "④ 조회";
   }
 }
 $("#lookupForm").onsubmit = (e) => { e.preventDefault(); runLookup(); };
@@ -448,9 +448,21 @@ $("#readBtn").onclick = async () => {
 };
 
 const drop = $("#drop");
-drop.onclick = () => $("#lkFiles").click();
-drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("#lkFiles").click(); } };
+const isTouch = matchMedia("(pointer: coarse)").matches;
+// 폰: 갤러리 열기 / 컴: 사진 고르기·폴더째 넣기 (빈 곳을 눌러도 사진 고르기)
+drop.onclick = (e) => { if (!isTouch && !e.target.closest("button, .thumb")) $("#lkFiles").click(); };
+drop.onkeydown = (e) => { if (e.target === drop && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); $("#lkFiles").click(); } };
+$("#pickGallery").onclick = $("#pickFiles").onclick = (e) => { e.stopPropagation(); $("#lkFiles").click(); };
+$("#pickFolder").onclick = (e) => { e.stopPropagation(); $("#lkFolder").click(); };
 $("#lkFiles").onchange = (e) => { addShots(e.target.files); e.target.value = ""; };
+$("#lkFolder").onchange = (e) => {
+  // 폴더 안 이미지만, 파일 이름순(스크린샷 찍은 순서)으로
+  const files = [...e.target.files].filter((f) => f.type.startsWith("image/"))
+    .sort((a, b) => a.name.localeCompare(b.name, "ko", { numeric: true }));
+  if (!files.length) toast("그 폴더에 이미지가 없어요.", true);
+  addShots(files);
+  e.target.value = "";
+};
 drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
 drop.ondragleave = () => drop.classList.remove("over");
 drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); addShots(e.dataTransfer.files); };
@@ -514,4 +526,5 @@ function renderLookup(res) {
     ${readInfo && readInfo.shown_count > readInfo.characters.length ? `<div class="verdict warn">스크린샷에서 ${readInfo.characters.length}개만 읽었어요
       <span>핸즈에는 캐릭터 ${readInfo.shown_count}개라고 나와요. 아래로 스크롤한 스크린샷도 같이 넣어 주세요.</span></div>` : ""}
     <div class="acc-grid">${res.results.map((r) => lookupCard(r, ours)).join("")}</div>`;
+  $("#lookupResult").scrollIntoView({ behavior: "smooth", block: "start" });
 }

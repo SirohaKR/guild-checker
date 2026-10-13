@@ -72,7 +72,7 @@ body {
 .brand .leaf { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: var(--accent-soft); font-size: 19px; }
 .brand b { color: var(--accent); }
 nav { display: flex; gap: 4px; flex: 1; }
-nav a { padding: 7px 15px; border-radius: 999px; font-weight: 700; color: var(--muted); text-decoration: none; }
+nav a { padding: 7px 15px; border-radius: 999px; font-weight: 700; color: var(--muted); text-decoration: none; white-space: nowrap; text-align: center; }
 nav a:hover { color: var(--text); background: var(--accent-soft); }
 nav a.on { background: var(--accent); color: var(--accent-ink); }
 .theme-btn { border-radius: 999px; padding: 7px 13px; font-weight: 700; }
@@ -120,6 +120,15 @@ textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3
 .drop:hover, .drop:focus, .drop.over { border-color: var(--accent); background: var(--accent-soft); outline: none; }
 .drop.busy { cursor: progress; opacity: .7; }
 .drop-msg { font-size: 13.5px; }
+.pick-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.touch, .touch-only { display: none !important; }
+@media (pointer: coarse) {
+  .desk, .desk-only { display: none !important; }
+  .touch { display: inline !important; }
+  .touch-only { display: inline-flex !important; }
+  .drop { cursor: default; }
+}
+#lookupResult, #result { scroll-margin-top: 120px; }
 .thumbs { display: flex; gap: 8px; flex-wrap: wrap; }
 .thumbs:empty { display: none; }
 .thumb { position: relative; }
@@ -262,7 +271,24 @@ textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3
 .toast.err { background: var(--dual); color: #fff; }
 
 @media (max-width: 640px) {
-  .top { padding: 10px 16px; }
+  .top { padding: 10px 16px; gap: 8px 10px; }
+  .brand { flex: 1; }
+  .theme-btn { order: 2; }
+  nav { order: 3; flex: 1 0 100%; gap: 6px; }
+  nav a { flex: 1; padding: 8px 6px; background: var(--panel-2); }
+  /* 폰에서 입력칸을 누를 때 화면이 확대되지 않도록 16px */
+  input, select, textarea { font-size: 16px; }
+  .drop { padding: 14px; }
+  .thumbs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; scroll-snap-type: x mandatory; }
+  .thumb { flex: none; scroll-snap-align: start; }
+  .thumb img { height: 180px; }
+  .thumb button { width: 30px; height: 30px; font-size: 16px; }
+  .read-row button, .pick-row button { flex: 1; padding: 11px 10px; }
+  .read-row #readMsg { flex: 1 0 100%; }
+  .review-right textarea { min-height: 260px; }
+  .verdict { padding: 13px 14px; font-size: 15px; }
+  .acc .main { gap: 10px; padding: 12px; }
+  .acc .name { font-size: 16px; }
   main { padding: 16px 16px 70px; }
   .form-grid .span2 { grid-column: auto; }
   .toolbar input { width: 100%; }

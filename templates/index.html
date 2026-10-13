@@ -80,8 +80,15 @@
         <div class="review-left">
         <div class="drop" id="drop" tabindex="0">
           <input type="file" id="lkFiles" accept="image/*" multiple hidden>
-          <div class="drop-msg"><b>① 핸즈 스크린샷</b>을 여기에 끌어다 놓거나, <b>Ctrl+V</b>로 붙여넣거나, 눌러서 고르세요
-            <span class="muted">— 여러 장 가능 (최대 10장), 그림을 누르면 크게 보여요</span></div>
+          <input type="file" id="lkFolder" webkitdirectory multiple hidden>
+          <div class="drop-msg"><b>① 핸즈 스크린샷 올리기</b>
+            <span class="desk muted">— 여기에 끌어다 놓거나 <b>Ctrl+V</b>로 붙여넣어도 돼요 · 최대 10장 · 올린 그림을 누르면 크게 보여요</span>
+            <span class="touch muted">— 여러 장 한꺼번에 고를 수 있어요 · 최대 10장 · 올린 그림을 누르면 크게 보여요</span></div>
+          <div class="pick-row">
+            <button type="button" class="primary touch-only" id="pickGallery">🖼 갤러리 열기</button>
+            <button type="button" class="ghost desk-only" id="pickFiles">📄 사진 고르기</button>
+            <button type="button" class="ghost desk-only" id="pickFolder">📁 폴더째 넣기</button>
+          </div>
           <div class="thumbs" id="thumbs"></div>
         </div>
         <div class="read-row">
