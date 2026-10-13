@@ -7,7 +7,7 @@ import os
 
 import anthropic
 
-MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5-5")
+MODEL = os.environ.get("CLAUDE_MODEL") or "claude-opus-5-5"  # 비어 있으면 기본값
 MAX_IMAGES = 10
 MAX_BYTES = 5 * 1024 * 1024  # Claude API 이미지 한 장 한도
 MEDIA_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
