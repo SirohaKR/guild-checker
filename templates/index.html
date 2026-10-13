@@ -9,7 +9,7 @@
     // 깜빡임 없이 저장된 테마 먼저 적용
     try { const t = localStorage.getItem("gc_theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
   </script>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=asset_v) }}">
 </head>
 <body>
 <header class="top">
@@ -76,16 +76,27 @@
           <input id="lkClaude" type="password" autocomplete="off" placeholder="sk-ant-…">
         </label>
         {% endif %}
-        <div class="span4 drop" id="drop" tabindex="0">
+        <div class="span4 review">
+        <div class="review-left">
+        <div class="drop" id="drop" tabindex="0">
           <input type="file" id="lkFiles" accept="image/*" multiple hidden>
-          <div class="drop-msg"><b>핸즈 스크린샷</b>을 여기에 끌어다 놓거나, <b>Ctrl+V</b>로 붙여넣거나, 눌러서 고르세요
-            <span class="muted">— 닉네임을 자동으로 읽어서 아래에 넣어요 (여러 장 가능)</span></div>
+          <div class="drop-msg"><b>① 핸즈 스크린샷</b>을 여기에 끌어다 놓거나, <b>Ctrl+V</b>로 붙여넣거나, 눌러서 고르세요
+            <span class="muted">— 여러 장 가능 (최대 10장), 그림을 누르면 크게 보여요</span></div>
           <div class="thumbs" id="thumbs"></div>
         </div>
-        <label class="span4">캐릭터 이름 (줄마다 하나, 최대 60명 · 스크린샷에서 읽은 이름이 틀리면 고쳐서 다시 조회)
-          <textarea id="lkNames" rows="4" placeholder="예: 가입신청자&#10;신청자부캐1" required></textarea>
+        <div class="read-row">
+          <button type="button" class="primary" id="readBtn" disabled>② 닉네임 읽기</button>
+          <button type="button" class="ghost" id="clearShots" hidden>스크린샷 모두 빼기</button>
+          <span class="muted" id="readMsg"></span>
+        </div>
+        </div>
+        <label class="review-right"><span>③ 읽은 닉네임 검수 <span class="muted">— 스크린샷과 비교해서 틀린 글자는 고치고, 빠진 건 줄마다 추가 (최대 60명)</span>
+            <b id="nameCount" class="name-count"></b></span>
+          <textarea id="lkNames" rows="12" placeholder="닉네임 읽기를 누르면 여기에 한 줄에 하나씩 들어와요.&#10;직접 적어도 돼요." required></textarea>
+          <span class="unsure" id="unsure" hidden></span>
         </label>
-        <button class="primary big" id="lkBtn" type="submit">조회</button>
+        </div>
+        <button class="primary big" id="lkBtn" type="submit">④ 조회</button>
       </div>
       <p class="hint">캐릭터마다 길드와 그 계정의 <b>유니온 대표 캐릭터</b>(보통 본캐)·대표의 길드를 보여줘요. 월드는 캐릭터에서 자동으로 알아내요.
         넣은 이름들이 몇 개 계정인지도 알려줘요(핸즈 목록이면 1개여야 정상). 키는 <b>어디에도 저장되지 않아요.</b></p>
@@ -101,6 +112,6 @@
 </main>
 
 <div id="toast" class="toast" hidden></div>
-<script src="{{ url_for('static', filename='app.js') }}"></script>
+<script src="{{ url_for('static', filename='app.js', v=asset_v) }}"></script>
 </body>
 </html>

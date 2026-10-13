@@ -26,6 +26,13 @@ def err(msg, code=400):
     return jsonify({"error": msg}), code
 
 
+@app.context_processor
+def asset_version():
+    # 업데이트 뒤 브라우저가 예전 app.js·style.css를 캐시에서 쓰지 않도록 파일 수정 시각을 주소에 붙인다
+    st = os.path.join(app.root_path, "static")
+    return {"asset_v": int(max(os.path.getmtime(os.path.join(st, f)) for f in ("app.js", "style.css")))}
+
+
 @app.get("/")
 def index():
     return render_template("index.html", worlds=checker.WORLDS, claude_key_on_server=vision.has_server_key())

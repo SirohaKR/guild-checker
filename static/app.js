@@ -365,56 +365,99 @@ function shrink(file) {
   });
 }
 
+// 스크린샷: ① 올리기(모아 두기) → ② 읽기 버튼 → ③ 텍스트 상자에서 검수 → ④ 조회
+let shots = [];        // [{file, url}]
 let reading = false;
-async function readImages(files) {
+let readInfo = null;
+
+function paintShots() {
+  $("#thumbs").innerHTML = shots.map((s, i) =>
+    `<div class="thumb"><img src="${s.url}" alt="" data-view="${i}"><button type="button" data-rm="${i}" title="빼기">×</button></div>`).join("");
+  $("#readBtn").disabled = !shots.length || reading;
+  $("#readBtn").textContent = shots.length ? `② 닉네임 읽기 (${shots.length}장)` : "② 닉네임 읽기";
+  $("#clearShots").hidden = !shots.length;
+}
+
+function addShots(files) {
   files = [...files].filter((f) => f.type.startsWith("image/"));
-  if (!files.length || reading) return;
-  if (files.length > 10) return toast("이미지는 한 번에 10장까지예요.", true);
-  const drop = $("#drop");
-  $("#thumbs").innerHTML = files.map((f) => `<img src="${URL.createObjectURL(f)}" alt="">`).join("");
+  if (!files.length) return;
+  const room = 10 - shots.length;
+  if (files.length > room) toast(`스크린샷은 10장까지예요. ${Math.max(room, 0)}장만 넣었어요.`, true);
+  shots.push(...files.slice(0, Math.max(room, 0)).map((f) => ({ file: f, url: URL.createObjectURL(f) })));
+  paintShots();
+}
+
+$("#thumbs").onclick = (e) => {
+  e.stopPropagation();  // 그림을 눌러도 파일 고르기 창이 뜨지 않게
+  if (e.target.dataset.rm !== undefined) {
+    const [s] = shots.splice(Number(e.target.dataset.rm), 1);
+    URL.revokeObjectURL(s.url);
+    paintShots();
+  } else if (e.target.dataset.view !== undefined) {
+    const v = document.createElement("div");
+    v.className = "viewer";
+    v.innerHTML = `<img src="${shots[Number(e.target.dataset.view)].url}" alt="">`;
+    v.onclick = () => v.remove();
+    document.body.append(v);
+  }
+};
+$("#clearShots").onclick = () => { shots.forEach((s) => URL.revokeObjectURL(s.url)); shots = []; paintShots(); };
+
+function countNames() {
+  const n = new Set($("#lkNames").value.split(/[\n,]/).map((x) => x.trim()).filter(Boolean)).size;
+  $("#nameCount").textContent = n ? `${n}명` : "";
+}
+$("#lkNames").oninput = countNames;
+
+$("#readBtn").onclick = async () => {
+  if (!shots.length || reading) return;
+  const have = $("#lkNames").value.trim();
+  if (have && !confirm("텍스트 상자에 있는 이름을 지우고 새로 읽은 이름으로 바꿀까요?")) return;
   reading = true;
-  drop.classList.add("busy");
-  const msg = $(".drop-msg").innerHTML;
-  $(".drop-msg").innerHTML = `<b>닉네임 읽는 중…</b> <span class="muted">(${files.length}장, 10~30초 정도)</span>`;
+  paintShots();
+  $("#readBtn").textContent = "읽는 중…";
+  $("#readMsg").textContent = `${shots.length}장 읽는 중 (10~30초 정도)`;
   try {
     const fd = new FormData();
-    for (const f of files) fd.append("images", await shrink(f), "shot.jpg");
+    for (const s of shots) fd.append("images", await shrink(s.file), "shot.jpg");
     if ($("#lkClaude")) fd.append("claude_key", $("#lkClaude").value.trim());
     const r = await fetch("/api/read-image", { method: "POST", body: fd });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || `오류 ${r.status}`);
     const names = data.characters.map((c) => c.name);
     if (!names.length) throw new Error("이미지에서 닉네임을 찾지 못했어요. " + (data.note || ""));
-    // 이미 적힌 이름 뒤에 새 이름만 붙인다
-    const have = $("#lkNames").value.split(/\n/).map((x) => x.trim()).filter(Boolean);
-    $("#lkNames").value = [...new Set([...have, ...names])].join("\n");
     readInfo = data;
+    $("#lkNames").value = names.join("\n");
+    countNames();
     const unsure = data.characters.filter((c) => c.unsure).map((c) => c.name);
-    const short = data.shown_count > names.length
-      ? ` — 화면에는 캐릭터 ${data.shown_count}개라서 ${data.shown_count - names.length}개가 빠졌어요. 스크롤한 스크린샷을 더 넣어 주세요` : "";
-    toast(`닉네임 ${names.length}개 읽음${unsure.length ? ` (확실하지 않음: ${unsure.join(", ")})` : ""}${short}`, !!short);
-    if ($("#lkKey").value.trim()) runLookup();
+    const tips = [];
+    if (unsure.length) tips.push(`확실하지 않은 이름: ${unsure.join(", ")} — 스크린샷과 꼭 비교해 주세요`);
+    if (data.shown_count > names.length) tips.push(`핸즈에는 캐릭터 ${data.shown_count}개인데 ${names.length}개만 읽었어요 — 스크롤한 스크린샷을 더 넣거나 직접 추가해 주세요`);
+    $("#unsure").hidden = !tips.length;
+    $("#unsure").innerHTML = tips.map(esc).join("<br>");
+    const u = data.usage;
+    $("#readMsg").textContent = `${names.length}명 읽음 · ${data.note || ""}${u ? ` · 토큰 입력 ${u.input.toLocaleString()} / 출력 ${u.output.toLocaleString()}` : ""}`;
+    $("#lkNames").focus();
   } catch (err) {
+    $("#readMsg").textContent = "";
     toast(err.message, true);
   } finally {
     reading = false;
-    drop.classList.remove("busy");
-    $(".drop-msg").innerHTML = msg;
+    paintShots();
   }
-}
-let readInfo = null;
+};
 
 const drop = $("#drop");
 drop.onclick = () => $("#lkFiles").click();
 drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("#lkFiles").click(); } };
-$("#lkFiles").onchange = (e) => { readImages(e.target.files); e.target.value = ""; };
+$("#lkFiles").onchange = (e) => { addShots(e.target.files); e.target.value = ""; };
 drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
 drop.ondragleave = () => drop.classList.remove("over");
-drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); readImages(e.dataTransfer.files); };
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); addShots(e.dataTransfer.files); };
 document.addEventListener("paste", (e) => {
   if ($("#view-lookup").hidden) return;
   const files = [...(e.clipboardData?.items || [])].filter((i) => i.kind === "file").map((i) => i.getAsFile()).filter(Boolean);
-  if (files.length) { e.preventDefault(); readImages(files); }
+  if (files.length) { e.preventDefault(); addShots(files); }
 });
 
 function lookupCard(r, ours) {
