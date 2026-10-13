@@ -122,6 +122,18 @@ check(r["results"][0]["dual"], "우리 길드 안 넣어도: 캐릭터와 대표
 r = checker.lookup(nexon.Client("test-key"), store, ["부캐C1"], "다른길드")
 check(r["results"][0]["rep_other_guild"] and not r["results"][0]["other_guild"], "부캐C1로 '다른길드' 가입 신청: 대표가 단풍잎 → 표시")
 
+print("7-2) 잘못 읽은 이름 바로잡기 제안")
+v = checker.hangul_variants("쨋뀨유논7")
+check("쨋뀨유뇬7" in v and "쨌뀨유논7" in v and len(v) <= checker.SUGGEST_MAX, "헷갈리는 자모 후보 만들기 (ㅗ→ㅛ, 받침 ㅅ→ㅆ)")
+r = checker.lookup(nexon.Client("test-key"), store, ["쨋뀨", "췐뿌", "쨋뀨유논7", "쨋뀨유논2"], "")
+by = {x["name"]: x for x in r["results"]}
+check(by["쨋뀨유논7"]["suggest"][0] == {**by["쨋뀨유논7"]["suggest"][0], "name": "쨋뀨유뇬7", "same_account": True},
+      "쨋뀨유논7 → 쨋뀨유뇬7 (같은 계정) 제안")
+sg = by["췐뿌"]["suggest"]
+check(sg[0]["name"] == "췐쀼" and sg[0]["same_account"], "췐뿌 → 췐쀼 (같은 계정)이 맨 앞")
+check(any(x["name"] == "췐부" and not x["same_account"] for x in sg), "남의 캐릭터 췐부는 '다른 계정'으로 표시")
+check("suggest" not in by["쨋뀨유논2"], "제대로 읽은 이름은 제안 없음")
+
 print("8) 스크린샷 읽기 (Claude는 가짜로)")
 import vision  # noqa: E402
 

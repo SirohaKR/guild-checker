@@ -366,6 +366,7 @@ def lookup(client, store, names, our_guild=""):
     for r in out:
         if r.get("rep"):
             r["same_account"] = [n for n in by_rep[(r["world"], r["rep"]["name"])] if n != r["name"]]
+    suggest_fixes(sc, out, by_rep)
     found = [r for r in out if r["found"]]
     return {
         "date": sc.date, "our_guild": our_guild, "results": out,
@@ -378,6 +379,83 @@ def lookup(client, store, names, our_guild=""):
             "api_calls": client.calls, "cache_hits": sc.cache_hits,
         },
     }
+
+
+# ── 이미지 인식이 잘 틀리는 한글 글자 바로잡기 ──
+# 닉네임엔 '뇬·쀼' 같은 드문 글자가 많아서, 이미지 인식이 흔한 글자(논·뿌)로 읽는 일이 잦다.
+# 없는 이름이 나오면 헷갈리기 쉬운 자모를 하나(또는 모음 둘)씩 바꿔 넥슨에서 찾아보고, 같은 계정이면 제안한다.
+_CHO = {0: 1, 1: 0, 3: 4, 4: 3, 7: 8, 8: 7, 9: 10, 10: 9, 12: 13, 13: 12}          # ㄱㄲ ㄷㄸ ㅂㅃ ㅅㅆ ㅈㅉ
+_JUNG = {0: 2, 2: 0, 4: 6, 6: 4, 8: 12, 12: 8, 13: 17, 17: 13, 1: 3, 3: 1, 5: 7, 7: 5}  # ㅏㅑ ㅓㅕ ㅗㅛ ㅜㅠ ㅐㅒ ㅔㅖ
+_JONG = {19: 20, 20: 19, 1: 2, 2: 1}                                                     # 받침 ㅅㅆ ㄱㄲ
+SUGGEST_MAX = 40  # 이름 하나당 넥슨에 물어볼 후보 수 상한
+
+
+def hangul_variants(name):
+    """헷갈리기 쉬운 자모를 바꾼 후보들 (가까운 것부터). 한 글자 바꾸기 → 모음 두 개 바꾸기."""
+    def parts(ch):
+        c = ord(ch) - 0xAC00
+        return (c // 588, (c % 588) // 28, c % 28) if 0 <= c < 11172 else None
+
+    def make(cho, jung, jong):
+        return chr(0xAC00 + cho * 588 + jung * 28 + jong)
+
+    singles, vowel_spots = [], []
+    for i, ch in enumerate(name):
+        p = parts(ch)
+        if not p:
+            continue
+        cho, jung, jong = p
+        if jung in _JUNG:
+            singles.append((i, make(cho, _JUNG[jung], jong)))
+            vowel_spots.append((i, make(cho, _JUNG[jung], jong)))
+        if jung in (5, 1):  # ㅔ↔ㅐ 는 ㅖ/ㅒ 와 별도로 한 번 더
+            other = {5: 1, 1: 5}[jung]
+            singles.append((i, make(cho, other, jong)))
+        if cho in _CHO:
+            singles.append((i, make(_CHO[cho], jung, jong)))
+        if jong in _JONG:
+            singles.append((i, make(cho, jung, _JONG[jong])))
+    out = []
+
+    def add(chars):
+        n = "".join(chars)
+        if n != name and n not in out:
+            out.append(n)
+
+    for i, c in singles:
+        chars = list(name); chars[i] = c; add(chars)
+    for a in range(len(vowel_spots)):
+        for b in range(a + 1, len(vowel_spots)):
+            chars = list(name)
+            for i, c in (vowel_spots[a], vowel_spots[b]):
+                chars[i] = c
+            add(chars)
+    return out[:SUGGEST_MAX]
+
+
+def suggest_fixes(sc, out, by_rep):
+    """없는 이름마다 비슷한 진짜 캐릭터를 찾아 r['suggest']에 넣는다. 같은 계정이면 same_account=True."""
+    missing = [r for r in out if not r["found"]]
+    if not missing:
+        return
+    # 이 목록의 주 계정 = 캐릭터가 가장 많이 묶인 대표
+    main = max(by_rep, key=lambda k: len(by_rep[k])) if by_rep else None
+    pairs = [(r, cand) for r in missing for cand in hangul_variants(r["name"])]
+    exists = sc._pmap(lambda p: sc.ocid(p[1]), pairs)
+    for (r, cand), oc in zip(pairs, exists):
+        if not oc:
+            continue
+        info = sc.info(cand)
+        if not info:
+            continue
+        rep = sc.rep_of(cand, info.get("world")) if info.get("world") else {"rep": None}
+        r.setdefault("suggest", []).append({
+            "name": info.get("name") or cand, "level": info.get("level"), "guild": info.get("guild") or "",
+            "same_account": bool(main) and (info.get("world"), rep["rep"]) == main,
+        })
+    for r in missing:
+        if r.get("suggest"):
+            r["suggest"].sort(key=lambda x: not x["same_account"])
 
 
 def slim(d):

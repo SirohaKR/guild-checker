@@ -348,17 +348,21 @@ async function runLookup() {
 }
 $("#lookupForm").onsubmit = (e) => { e.preventDefault(); runLookup(); };
 
-// 스크린샷: 긴 변 2000px로 줄여서 JPEG로 보낸다 (토큰·용량 절약, 글자는 충분히 보임)
+// 스크린샷 크기 맞추기: Claude가 받을 수 있는 최대(긴 변 2576px, 375만 화소)까지 원본 그대로 —
+// 작은 스크린샷은 키워서 보낸다(최대 2배). 닉네임 글자가 작아서 모음 획(ㅗ/ㅛ) 하나가 잘 안 보이기 때문.
 function shrink(file) {
   return new Promise((ok, fail) => {
     const img = new Image();
     img.onload = () => {
-      const k = Math.min(1, 2000 / Math.max(img.width, img.height));
+      const k = Math.min(2, 2576 / Math.max(img.width, img.height), Math.sqrt(3.75e6 / (img.width * img.height)));
+      URL.revokeObjectURL(img.src);
+      if (Math.abs(k - 1) < 0.02 && file.size < 4.5e6 && /png|jpeg/.test(file.type)) return ok(file);  // 그대로
       const c = document.createElement("canvas");
       c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
-      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      URL.revokeObjectURL(img.src);
-      c.toBlob((b) => (b ? ok(b) : fail(new Error("이미지를 줄이지 못했어요"))), "image/jpeg", 0.92);
+      const g = c.getContext("2d");
+      g.imageSmoothingQuality = "high";
+      g.drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob((b) => (b ? ok(b) : fail(new Error("이미지를 줄이지 못했어요"))), "image/jpeg", 0.95);
     };
     img.onerror = () => fail(new Error("이미지를 열지 못했어요"));
     img.src = URL.createObjectURL(file);
@@ -419,7 +423,7 @@ $("#readBtn").onclick = async () => {
   $("#readMsg").textContent = `${shots.length}장 읽는 중 (10~30초 정도)`;
   try {
     const fd = new FormData();
-    for (const s of shots) fd.append("images", await shrink(s.file), "shot.jpg");
+    for (const s of shots) { const b = await shrink(s.file); fd.append("images", b, b.type === "image/png" ? "shot.png" : "shot.jpg"); }
     if ($("#lkClaude")) fd.append("claude_key", $("#lkClaude").value.trim());
     const r = await fetch("/api/read-image", { method: "POST", body: fd });
     const data = await r.json().catch(() => ({}));
@@ -474,8 +478,11 @@ document.addEventListener("paste", (e) => {
 
 function lookupCard(r, ours) {
   if (!r.found) {
-    return `<article class="acc"><div class="main">${avatar(null)}<div class="who"><div class="name">${esc(r.name)}</div>
-      <div class="sub">${esc(r.reason)}</div></div></div></article>`;
+    const sg = (r.suggest || []).map((x) => `<button type="button" class="fix ${x.same_account ? "same" : ""}" data-from="${esc(r.name)}" data-to="${esc(x.name)}">
+        ${esc(x.name)} <small>${x.same_account ? "같은 계정 ✓" : `다른 계정${x.guild ? ` · ${esc(x.guild)}` : ""}`}${x.level ? ` · Lv.${x.level}` : ""}</small></button>`).join("");
+    return `<article class="acc missing"><div class="main">${avatar(null)}<div class="who"><div class="name">${esc(r.name)}</div>
+      <div class="sub">${esc(r.reason)}</div></div></div>
+      ${sg ? `<div class="alts"><div class="ttl">혹시 이 캐릭터? (누르면 이름을 바꿔요)</div><div class="fixes">${sg}</div></div>` : ""}</article>`;
   }
   const c = r.char, p = r.rep;
   const g = (x) => (x ? `「${esc(x)}」` : "길드 없음");
@@ -504,12 +511,19 @@ function lookupCard(r, ours) {
 function renderLookup(res) {
   const s = res.summary, ours = res.our_guild;
   const bad = res.results.filter((r) => r.dual);
-  let v;
+  let v = "";
   if (bad.length) {
     v = `<div class="verdict bad">⚠ 다른 길드에 있는 캐릭터 ${bad.length}명
       <span>${bad.map((r) => `${esc(r.char.name)} → ${esc(r.other_guild ? r.char.guild : r.rep?.guild)}`).join(" · ")}</span></div>`;
-  } else {
+  } else if (!s.not_found && !s.unknown_rep) {
     v = `<div class="verdict ok">✓ ${ours ? `「${esc(ours)}」 말고 다른 길드에 있는 캐릭터 없음` : "이중길드 없음"}</div>`;
+  }
+  const autofix = res.results.filter((r) => !r.found && r.suggest && r.suggest.filter((x) => x.same_account).length === 1)
+    .map((r) => [r.name, r.suggest.find((x) => x.same_account).name]);
+  if (autofix.length) {
+    v += `<div class="verdict fixbox">비슷한 이름의 같은 계정 캐릭터를 찾았어요 — 잘못 읽은 것 같아요
+      <span>${autofix.map(([a, b]) => `${esc(a)} → <b>${esc(b)}</b>`).join(" · ")}</span>
+      <button type="button" class="primary" id="fixAll">모두 바꾸고 다시 조회</button></div>`;
   }
   if (s.not_found || s.unknown_rep) {
     v += `<div class="verdict warn">확인 못 한 캐릭터가 있어요
@@ -527,4 +541,15 @@ function renderLookup(res) {
       <span>핸즈에는 캐릭터 ${readInfo.shown_count}개라고 나와요. 아래로 스크롤한 스크린샷도 같이 넣어 주세요.</span></div>` : ""}
     <div class="acc-grid">${res.results.map((r) => lookupCard(r, ours)).join("")}</div>`;
   $("#lookupResult").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("#lookupResult").querySelectorAll(".fix").forEach((b) => (b.onclick = () => applyFixes([[b.dataset.from, b.dataset.to]])));
+  if ($("#fixAll")) $("#fixAll").onclick = () => applyFixes(autofix);
+}
+
+// 텍스트 상자에서 잘못 읽은 이름을 바꾸고 다시 조회
+function applyFixes(pairs) {
+  const map = new Map(pairs);
+  $("#lkNames").value = $("#lkNames").value.split("\n").map((l) => map.get(l.trim()) ?? l).join("\n");
+  countNames();
+  toast(`${pairs.length}개 이름을 바꿨어요`);
+  runLookup();
 }

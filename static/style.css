@@ -153,6 +153,14 @@ textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3
 .verdict span { font-weight: 600; font-size: 13px; }
 .verdict.ok { background: var(--ok-soft); color: var(--ok); }
 .verdict.bad { background: var(--dual-soft); color: var(--dual); border: 2px solid var(--dual); }
+.verdict.fixbox { background: var(--sky-soft); color: var(--sky); }
+.verdict.fixbox button { align-self: flex-start; margin-top: 6px; }
+.acc.missing { border: 2px dashed var(--gold); }
+.fixes { display: flex; gap: 6px; flex-wrap: wrap; }
+.fix { padding: 6px 11px; border-radius: 10px; font-weight: 800; background: var(--panel); border: 1px solid var(--line); }
+.fix small { font-weight: 600; color: var(--muted); }
+.fix.same { border-color: var(--ok); background: var(--ok-soft); color: var(--ok); }
+.fix.same small { color: var(--ok); }
 .verdict.warn { background: var(--gold-soft); color: var(--gold); }
 .key-row { display: flex; gap: 6px; }
 .key-row button { flex: none; }
