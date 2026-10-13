@@ -1,3 +1,4 @@
 flask>=3.0.0
 requests>=2.31.0
 tzdata>=2024.1  # slim 이미지엔 시간대 데이터가 없어서 한국 시간 계산에 필요
+anthropic>=1.13.0

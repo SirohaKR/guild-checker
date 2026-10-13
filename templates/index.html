@@ -16,7 +16,7 @@
   <div class="brand"><span class="leaf">🍁</span>이중길드 <b>검사기</b></div>
   <nav>
     <a href="#check" data-view="check" class="on">검사</a>
-    <a href="#lookup" data-view="lookup">이름 조회</a>
+    <a href="#lookup" data-view="lookup">가입 확인</a>
     <a href="#history" data-view="history">지난 기록</a>
   </nav>
   <button class="theme-btn" id="themeBtn" type="button" title="라이트/다크 전환"></button>
@@ -61,25 +61,34 @@
     <div id="result"></div>
   </section>
 
-  <!-- 이름 조회 -->
+  <!-- 가입 확인 (이름 조회) -->
   <section id="view-lookup" hidden>
     <form id="lookupForm" class="card form-card">
       <div class="form-grid">
         <label class="span2">넥슨 API 키
           <input id="lkKey" type="password" autocomplete="off" placeholder="test_… 또는 live_…" required>
         </label>
-        <label>월드
-          <select id="lkWorld">
-            {% for w in worlds %}<option>{{ w }}</option>{% endfor %}
-          </select>
+        <label class="span2"><span>우리 길드 이름 <span class="muted">(선택 — 넣으면 다른 길드 캐릭터를 바로 표시)</span></span>
+          <input id="lkGuild" placeholder="예: 단풍잎">
         </label>
-        <label class="span2">캐릭터 이름 (여러 명이면 줄마다 하나, 최대 30명)
-          <textarea id="lkNames" rows="3" placeholder="예: 가입신청자&#10;의심되는캐릭터" required></textarea>
+        {% if not claude_key_on_server %}
+        <label class="span2"><span>Claude API 키 <span class="muted">(스크린샷 읽기용 · 서버에 ANTHROPIC_API_KEY를 넣으면 이 칸이 사라져요)</span></span>
+          <input id="lkClaude" type="password" autocomplete="off" placeholder="sk-ant-…">
+        </label>
+        {% endif %}
+        <div class="span4 drop" id="drop" tabindex="0">
+          <input type="file" id="lkFiles" accept="image/*" multiple hidden>
+          <div class="drop-msg"><b>핸즈 스크린샷</b>을 여기에 끌어다 놓거나, <b>Ctrl+V</b>로 붙여넣거나, 눌러서 고르세요
+            <span class="muted">— 닉네임을 자동으로 읽어서 아래에 넣어요 (여러 장 가능)</span></div>
+          <div class="thumbs" id="thumbs"></div>
+        </div>
+        <label class="span4">캐릭터 이름 (줄마다 하나, 최대 60명 · 스크린샷에서 읽은 이름이 틀리면 고쳐서 다시 조회)
+          <textarea id="lkNames" rows="4" placeholder="예: 가입신청자&#10;신청자부캐1" required></textarea>
         </label>
         <button class="primary big" id="lkBtn" type="submit">조회</button>
       </div>
-      <p class="hint">캐릭터의 길드와 그 계정의 <b>유니온 대표 캐릭터</b>(보통 본캐)·대표의 길드를 보여줘요. 둘의 길드가 다르면 이중길드예요.
-        넣은 이름끼리 대표가 같으면 같은 계정으로 표시해요. <b>부캐 목록 전체는 넥슨 API로 알 수 없어요.</b> API 키는 저장되지 않아요.</p>
+      <p class="hint">캐릭터마다 길드와 그 계정의 <b>유니온 대표 캐릭터</b>(보통 본캐)·대표의 길드를 보여줘요. 월드는 캐릭터에서 자동으로 알아내요.
+        넣은 이름들이 몇 개 계정인지도 알려줘요(핸즈 목록이면 1개여야 정상). 키는 <b>어디에도 저장되지 않아요.</b></p>
     </form>
     <div id="lookupResult"></div>
   </section>

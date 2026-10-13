@@ -48,7 +48,7 @@ function showView() {
   if (v === "lookup") {
     // 검사 화면에서 넣은 키·월드를 이 화면에서도 쓰게 (메모리에서만, 저장 안 함)
     if (!$("#lkKey").value) $("#lkKey").value = $("#apiKey").value;
-    if (!$("#lkWorld").dataset.touched) $("#lkWorld").value = $("#world").value;
+    if (!$("#lkGuild").value) $("#lkGuild").value = $("#guild").value;
   }
   if (v === "history") loadHistory();
 }
@@ -277,7 +277,7 @@ function renderResult() {
 
 function renderWelcome() {
   $("#result").innerHTML = `<div class="welcome">
-    <div class="card"><div class="num">1</div><h3>API 키 넣기</h3><p>넥슨 오픈API 사이트에서 받은 키를 넣어요. 이 브라우저에만 기억돼요.</p></div>
+    <div class="card"><div class="num">1</div><h3>API 키 넣기</h3><p>넥슨 오픈API 사이트에서 받은 키를 넣어요. 어디에도 저장되지 않아요(매번 입력).</p></div>
     <div class="card"><div class="num">2</div><h3>월드·길드 고르기</h3><p>우리 길드원마다 유니온 대표 캐릭터를 찾아 계정별로 묶어요.</p></div>
     <div class="card"><div class="num">3</div><h3>검사 누르기</h3><p>대표 캐릭터가 다른 길드에 있으면 이중길드로 표시돼요. 결과는 '지난 기록'에 남아요.</p></div>
   </div>`;
@@ -328,17 +328,15 @@ async function loadHistory() {
   renderResult();
 })();
 
-// ── 이름 조회 ──
-$("#lkWorld").onchange = () => ($("#lkWorld").dataset.touched = "1");
-$("#lookupForm").onsubmit = async (e) => {
-  e.preventDefault();
+// ── 가입 확인 (이름 조회 + 스크린샷 읽기) ──
+async function runLookup() {
   const btn = $("#lkBtn");
   btn.disabled = true;
   btn.textContent = "조회 중…";
   try {
     const r = await api("/api/lookup", {
       method: "POST",
-      body: JSON.stringify({ api_key: $("#lkKey").value.trim(), world: $("#lkWorld").value, names: $("#lkNames").value }),
+      body: JSON.stringify({ api_key: $("#lkKey").value.trim(), our_guild: $("#lkGuild").value.trim(), names: $("#lkNames").value }),
     });
     renderLookup(r);
   } catch (err) {
@@ -347,9 +345,79 @@ $("#lookupForm").onsubmit = async (e) => {
     btn.disabled = false;
     btn.textContent = "조회";
   }
-};
+}
+$("#lookupForm").onsubmit = (e) => { e.preventDefault(); runLookup(); };
 
-function lookupCard(r) {
+// 스크린샷: 긴 변 2000px로 줄여서 JPEG로 보낸다 (토큰·용량 절약, 글자는 충분히 보임)
+function shrink(file) {
+  return new Promise((ok, fail) => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 2000 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      c.toBlob((b) => (b ? ok(b) : fail(new Error("이미지를 줄이지 못했어요"))), "image/jpeg", 0.92);
+    };
+    img.onerror = () => fail(new Error("이미지를 열지 못했어요"));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+let reading = false;
+async function readImages(files) {
+  files = [...files].filter((f) => f.type.startsWith("image/"));
+  if (!files.length || reading) return;
+  if (files.length > 10) return toast("이미지는 한 번에 10장까지예요.", true);
+  const drop = $("#drop");
+  $("#thumbs").innerHTML = files.map((f) => `<img src="${URL.createObjectURL(f)}" alt="">`).join("");
+  reading = true;
+  drop.classList.add("busy");
+  const msg = $(".drop-msg").innerHTML;
+  $(".drop-msg").innerHTML = `<b>닉네임 읽는 중…</b> <span class="muted">(${files.length}장, 10~30초 정도)</span>`;
+  try {
+    const fd = new FormData();
+    for (const f of files) fd.append("images", await shrink(f), "shot.jpg");
+    if ($("#lkClaude")) fd.append("claude_key", $("#lkClaude").value.trim());
+    const r = await fetch("/api/read-image", { method: "POST", body: fd });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `오류 ${r.status}`);
+    const names = data.characters.map((c) => c.name);
+    if (!names.length) throw new Error("이미지에서 닉네임을 찾지 못했어요. " + (data.note || ""));
+    // 이미 적힌 이름 뒤에 새 이름만 붙인다
+    const have = $("#lkNames").value.split(/\n/).map((x) => x.trim()).filter(Boolean);
+    $("#lkNames").value = [...new Set([...have, ...names])].join("\n");
+    readInfo = data;
+    const unsure = data.characters.filter((c) => c.unsure).map((c) => c.name);
+    const short = data.shown_count > names.length
+      ? ` — 화면에는 캐릭터 ${data.shown_count}개라서 ${data.shown_count - names.length}개가 빠졌어요. 스크롤한 스크린샷을 더 넣어 주세요` : "";
+    toast(`닉네임 ${names.length}개 읽음${unsure.length ? ` (확실하지 않음: ${unsure.join(", ")})` : ""}${short}`, !!short);
+    if ($("#lkKey").value.trim()) runLookup();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    reading = false;
+    drop.classList.remove("busy");
+    $(".drop-msg").innerHTML = msg;
+  }
+}
+let readInfo = null;
+
+const drop = $("#drop");
+drop.onclick = () => $("#lkFiles").click();
+drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("#lkFiles").click(); } };
+$("#lkFiles").onchange = (e) => { readImages(e.target.files); e.target.value = ""; };
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); readImages(e.dataTransfer.files); };
+document.addEventListener("paste", (e) => {
+  if ($("#view-lookup").hidden) return;
+  const files = [...(e.clipboardData?.items || [])].filter((i) => i.kind === "file").map((i) => i.getAsFile()).filter(Boolean);
+  if (files.length) { e.preventDefault(); readImages(files); }
+});
+
+function lookupCard(r, ours) {
   if (!r.found) {
     return `<article class="acc"><div class="main">${avatar(null)}<div class="who"><div class="name">${esc(r.name)}</div>
       <div class="sub">${esc(r.reason)}</div></div></div></article>`;
@@ -357,28 +425,50 @@ function lookupCard(r) {
   const c = r.char, p = r.rep;
   const g = (x) => (x ? `「${esc(x)}」` : "길드 없음");
   const badges = [];
+  if (r.other_guild) badges.push(`<span class="badge dual">다른 길드 ${g(c.guild)}</span>`);
+  else if (ours && c.guild === ours) badges.push(`<span class="badge ok">우리 길드</span>`);
   if (!p) badges.push(`<span class="badge gold">${esc(r.reason || "대표 캐릭터를 알 수 없음")}</span>`);
   else if (r.is_rep) badges.push(`<span class="badge ok">이 캐릭터가 대표(본캐)</span>`);
-  else if (r.dual) badges.push(`<span class="badge dual">대표는 ${g(p.guild)} 길드</span>`);
-  else if (p.guild === c.guild && c.guild) badges.push(`<span class="badge ok">대표와 같은 길드</span>`);
-  else badges.push(`<span class="badge gold">대표 ${g(p.guild)}</span>`);
+  else if (r.rep_other_guild) badges.push(`<span class="badge dual">대표는 ${g(p.guild)}</span>`);
   if (r.union_level) badges.push(`<span class="badge acc-c">유니온 ${Number(r.union_level).toLocaleString()}</span>`);
   if (c.access === "false") badges.push(`<span class="badge sky">7일 미접속</span>`);
-  const same = r.same_account && r.same_account.length
-    ? `<div class="ttl" style="margin-top:10px">넣은 이름 중 같은 계정</div><div class="sub">${r.same_account.map(esc).join(", ")}</div>` : "";
+  const why = [];
+  if (r.other_guild) why.push(`이 캐릭터가 ${g(c.guild)}`);
+  if (r.rep_other_guild) why.push(`대표(본캐)가 ${g(p.guild)}`);
+  if (r.dual && !why.length) why.push(`이 캐릭터는 ${g(c.guild)}, 대표(본캐)는 ${g(p.guild)}`);
   return `<article class="acc ${r.dual ? "is-dual" : ""}">
-    ${r.dual ? `<div class="flag">⚠ 이중길드 <span>— 이 캐릭터는 ${g(c.guild)}, 대표(본캐)는 ${g(p.guild)}</span></div>` : ""}
+    ${r.dual ? `<div class="flag">⚠ 다른 길드 <span>— ${why.join(" · ")}</span></div>` : ""}
     <div class="main">${avatar(c)}
-      <div class="who"><div class="sub">조회한 캐릭터 · ${g(c.guild)}</div><div class="name">${esc(c.name)}</div>
+      <div class="who"><div class="sub">${esc(r.world)} · ${g(c.guild)}</div><div class="name">${esc(c.name)}</div>
         <div class="sub">${esc(lvjob(c))}</div><div class="badges">${badges.join("")}</div></div></div>
     ${p && !r.is_rep ? `<div class="alts"><div class="ttl">유니온 대표 캐릭터</div>
-      <div class="chars">${charChip(p, r.dual)}</div>${same}</div>` : same ? `<div class="alts">${same}</div>` : ""}
+      <div class="chars">${charChip(p, r.rep_other_guild || (r.dual && !r.other_guild))}</div></div>` : ""}
   </article>`;
 }
 
 function renderLookup(res) {
-  const dual = res.results.filter((r) => r.dual).length;
-  $("#lookupResult").innerHTML = `
-    <div class="sub" style="margin:4px 2px 12px">${esc(res.world)} · ${esc(res.date)} 기준 · ${res.results.length}명 조회${dual ? ` · <b style="color:var(--warn)">이중길드 ${dual}명</b>` : ""}</div>
-    <div class="acc-grid">${res.results.map(lookupCard).join("")}</div>`;
+  const s = res.summary, ours = res.our_guild;
+  const bad = res.results.filter((r) => r.dual);
+  let v;
+  if (bad.length) {
+    v = `<div class="verdict bad">⚠ 다른 길드에 있는 캐릭터 ${bad.length}명
+      <span>${bad.map((r) => `${esc(r.char.name)} → ${esc(r.other_guild ? r.char.guild : r.rep?.guild)}`).join(" · ")}</span></div>`;
+  } else {
+    v = `<div class="verdict ok">✓ ${ours ? `「${esc(ours)}」 말고 다른 길드에 있는 캐릭터 없음` : "이중길드 없음"}</div>`;
+  }
+  if (s.not_found || s.unknown_rep) {
+    v += `<div class="verdict warn">확인 못 한 캐릭터가 있어요
+      <span>없는 이름 ${s.not_found}명${s.unknown_rep ? ` · 유니온 랭킹에 없어 대표를 모름 ${s.unknown_rep}명` : ""} — 이름(오타·개명)을 확인해 주세요</span></div>`;
+  }
+  const acc = s.accounts > 1
+    ? `<div class="verdict warn">넣은 캐릭터가 계정 ${s.accounts}개로 나뉘어요
+        <span>핸즈 목록(한 계정)이면 1개여야 해요. 다른 사람 캐릭터가 섞였거나 다른 월드 캐릭터예요.</span></div>` : "";
+  const u = readInfo && readInfo.usage;
+  $("#lookupResult").innerHTML = `${v}${acc}
+    <div class="sub" style="margin:4px 2px 12px">${esc(res.date)} 데이터 기준 · ${s.total}명 조회 · 계정 ${s.accounts}개${s.worlds.length ? ` · ${s.worlds.map(esc).join(", ")}` : ""}
+      · 넥슨 API ${s.api_calls}번${u ? ` · 이미지 읽기 ${esc(u.model)} 토큰 입력 ${u.input.toLocaleString()} / 출력 ${u.output.toLocaleString()}` : ""}
+      ${readInfo && readInfo.note ? `<br>이미지: ${esc(readInfo.note)}` : ""}</div>
+    ${readInfo && readInfo.shown_count > readInfo.characters.length ? `<div class="verdict warn">스크린샷에서 ${readInfo.characters.length}개만 읽었어요
+      <span>핸즈에는 캐릭터 ${readInfo.shown_count}개라고 나와요. 아래로 스크롤한 스크린샷도 같이 넣어 주세요.</span></div>` : ""}
+    <div class="acc-grid">${res.results.map((r) => lookupCard(r, ours)).join("")}</div>`;
 }

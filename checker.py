@@ -158,17 +158,19 @@ class Scanner:
                 raise
             return new, fn(new)
 
-    def rep_of(self, name):
-        """캐릭터 이름 → {'ocid', 'rep'(대표 이름 또는 None), 'reason'}"""
+    def rep_of(self, name, world=None):
+        """캐릭터 이름 → {'ocid', 'rep'(대표 이름 또는 None), 'reason'}. world를 안 주면 검사 중인 길드의 월드."""
+        w = world or self.world_api
+
         def work():
             def fetch_rep(oc):
                 def api():
-                    row = self.c.union_rep(oc, self.world_api, self.date)
+                    row = self.c.union_rep(oc, w, self.date)
                     if not row or not row.get("character_name"):
                         return None
                     return {"name": row["character_name"], "union_level": row.get("union_level")}
-                return self._once(("rep", oc), lambda: self._cached(
-                    lambda: self.db.get_rep(oc, self.world_api), lambda v: self.db.put_rep(oc, self.world_api, v), api))
+                return self._once(("rep", oc, w), lambda: self._cached(
+                    lambda: self.db.get_rep(oc, w), lambda v: self.db.put_rep(oc, w, v), api))
 
             oc, rep = self._with_ocid(name, fetch_rep)
             if not oc:
@@ -176,7 +178,7 @@ class Scanner:
             if not rep:
                 return {"ocid": oc, "rep": None, "reason": "유니온 랭킹에 없는 계정"}
             return {"ocid": oc, "rep": rep["name"], "union_level": rep.get("union_level"), "reason": None}
-        return self._once(("repof", name), work)
+        return self._once(("repof", name, w), work)
 
     def info(self, name, date=None):
         """캐릭터 기본 정보(길드·레벨·직업·이미지). 못 찾으면 None."""
@@ -311,49 +313,71 @@ class Scanner:
                      "unknown": sum(1 for r in found if not r["rep"])}
 
 
-LOOKUP_MAX = 30  # 이름 조회 한 번에 최대 몇 명
+LOOKUP_MAX = 60  # 이름 조회 한 번에 최대 몇 명 (핸즈 캐릭터 목록 한 계정분)
 
 
-def lookup(client, store, world, names):
-    """이름(여러 개)으로 그 사람 조회: 캐릭터의 길드 + 계정의 유니온 대표 캐릭터와 그 길드.
-    부캐 목록 전체는 넥슨 API로 알 수 없어서, 넣은 이름끼리 대표가 같으면 같은 계정으로 묶어 보여준다."""
-    job = Job("lookup", world, "")
-    out = []
-    for name in names[:LOOKUP_MAX]:
-        sc = Scanner(client, store, job, world, "")
+def lookup(client, store, names, our_guild=""):
+    """이름(여러 개)으로 조회: 캐릭터마다 길드 + 그 계정의 유니온 대표 캐릭터와 대표의 길드.
+    월드는 캐릭터 정보에서 알아낸다(여러 월드가 섞여 있어도 됨).
+    our_guild(가입하려는 우리 길드)를 주면 그 밖의 길드에 있는 캐릭터를 '다른 길드'로 표시한다.
+    넣은 이름끼리 대표가 같으면 같은 계정 — 핸즈 목록이면 전부 한 계정이어야 정상."""
+    our_guild = (our_guild or "").strip()
+    names = list(dict.fromkeys(names))[:LOOKUP_MAX]
+    job = Job("lookup", "", "")
+    sc = Scanner(client, store, job, "", "")
+
+    def one(name):
         info = sc.info(name)
+        if info and not info.get("world"):
+            # 월드가 없는 예전 캐시 → 새로 받는다
+            oc = sc.ocid(name)
+            info = slim(client.character_basic(oc, sc.date))
+            store.put_char(oc, sc.date, info)
         if not info:
-            out.append({"name": name, "found": False, "reason": "캐릭터를 찾을 수 없음 (이름·개명 확인)"})
-            continue
-        # 유니온은 월드별이라 그 캐릭터의 월드로 조회 (헬리오스/핼리오스 둘 다 시도)
-        worlds = WORLD_ALIASES.get(world, [world])
-        rep = None
-        for w in worlds:
-            sc.world_api = w
-            sc._memo.pop(("repof", name), None)
-            rep = sc.rep_of(name)
-            if rep["rep"]:
-                break
+            return {"name": name, "found": False, "reason": "캐릭터를 찾을 수 없음 (이름·개명 확인)"}
+        world = info["world"]
+        rep = sc.rep_of(name, world)
         rep_info = sc.info(rep["rep"]) if rep["rep"] else None
-        guild, rep_guild = info.get("guild") or "", (rep_info or {}).get("guild")
-        out.append({
-            "name": name, "found": True, "char": info | {"name": info.get("name") or name},
+        guild = info.get("guild") or ""
+        rep_guild = (rep_info or {}).get("guild") or ""
+        real = info.get("name") or name
+        other = bool(our_guild) and bool(guild) and guild != our_guild
+        rep_other = bool(our_guild) and bool(rep_guild) and rep_guild != our_guild and rep["rep"] != real
+        return {
+            "name": name, "found": True, "world": world, "char": info | {"name": real},
             "rep": (rep_info or {}) | {"name": rep["rep"]} if rep["rep"] else None,
             "union_level": rep.get("union_level"),
-            "is_rep": rep["rep"] == (info.get("name") or name),
+            "is_rep": rep["rep"] == real,
             "reason": rep["reason"],
-            # 이 캐릭터와 대표 캐릭터가 둘 다 길드에 있는데 서로 다르면 이중길드
-            "dual": bool(rep["rep"]) and bool(guild) and bool(rep_guild) and guild != rep_guild,
-        })
-    # 넣은 이름들 중 대표가 같은 것끼리 같은 계정
+            "other_guild": other,           # 이 캐릭터가 우리 말고 다른 길드에 있음
+            "rep_other_guild": rep_other,   # 대표(본캐)가 우리 말고 다른 길드에 있음
+            # 우리 길드를 안 넣었을 때: 이 캐릭터와 대표가 서로 다른 길드면 이중길드
+            "dual": other or rep_other or (not our_guild and bool(rep["rep"]) and bool(guild)
+                                            and bool(rep_guild) and guild != rep_guild),
+        }
+
+    out = sc._pmap(one, names)
+
+    # 계정 묶기: 대표(+월드)가 같은 것끼리
     by_rep = {}
     for r in out:
         if r.get("rep"):
-            by_rep.setdefault(r["rep"]["name"], []).append(r["name"])
+            by_rep.setdefault((r["world"], r["rep"]["name"]), []).append(r["name"])
     for r in out:
         if r.get("rep"):
-            r["same_account"] = [n for n in by_rep[r["rep"]["name"]] if n != r["name"]]
-    return {"date": data_date(), "world": world, "results": out}
+            r["same_account"] = [n for n in by_rep[(r["world"], r["rep"]["name"])] if n != r["name"]]
+    found = [r for r in out if r["found"]]
+    return {
+        "date": sc.date, "our_guild": our_guild, "results": out,
+        "summary": {
+            "total": len(out), "found": len(found), "not_found": len(out) - len(found),
+            "dual": sum(1 for r in out if r.get("dual")),
+            "accounts": len(by_rep),
+            "unknown_rep": sum(1 for r in found if not r.get("rep")),
+            "worlds": sorted({r["world"] for r in found}),
+            "api_calls": client.calls, "cache_hits": sc.cache_hits,
+        },
+    }
 
 
 def slim(d):
@@ -363,7 +387,7 @@ def slim(d):
     return {"name": d.get("character_name"), "guild": d.get("character_guild_name") or "",
             "level": d.get("character_level"), "job": d.get("character_class"),
             "exp": d.get("character_exp"), "image": d.get("character_image"),
-            "access": d.get("access_flag")}
+            "access": d.get("access_flag"), "world": d.get("world_name")}
 
 
 def build_result(guild, names, reps, infos, stale, others, activity, reverse):

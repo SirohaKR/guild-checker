@@ -8,9 +8,11 @@ from flask import Flask, jsonify, render_template, request
 
 import checker
 import nexon
+import vision
 from db import Store
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024  # 스크린샷 여러 장
 store = Store()
 store.prune()
 
@@ -26,7 +28,7 @@ def err(msg, code=400):
 
 @app.get("/")
 def index():
-    return render_template("index.html", worlds=checker.WORLDS)
+    return render_template("index.html", worlds=checker.WORLDS, claude_key_on_server=vision.has_server_key())
 
 
 @app.post("/api/scan")
@@ -62,24 +64,32 @@ def start_scan():
 
 @app.post("/api/lookup")
 def lookup():
-    """이름으로 그 사람 조회 (몇 명뿐이라 바로 처리). API 키는 이 요청 안에서만 쓰고 버린다."""
+    """이름으로 조회 (가입 신청자 확인용). API 키는 이 요청 안에서만 쓰고 버린다."""
     body = request.get_json(silent=True) or {}
     key = (body.get("api_key") or "").strip()
-    world = body.get("world")
     names = [n.strip() for n in str(body.get("names") or "").replace(",", "\n").splitlines() if n.strip()]
     names = list(dict.fromkeys(names))
     if not key:
         return err("넥슨 API 키를 넣어 주세요.")
-    if world not in checker.WORLDS:
-        return err("월드를 골라 주세요.")
     if not names:
         return err("조회할 캐릭터 이름을 넣어 주세요.")
     if len(names) > checker.LOOKUP_MAX:
         return err(f"한 번에 {checker.LOOKUP_MAX}명까지 조회할 수 있어요.")
     try:
-        return jsonify(checker.lookup(nexon.Client(key), store, world, names))
+        return jsonify(checker.lookup(nexon.Client(key), store, names, body.get("our_guild") or ""))
     except nexon.NexonError as e:
         return err(str(e), 502)
+
+
+@app.post("/api/read-image")
+def read_image():
+    """스크린샷에서 캐릭터 닉네임 읽기 (Claude API). Claude 키도 저장하지 않는다."""
+    files = request.files.getlist("images")
+    try:
+        imgs = [(f.read(), f.mimetype) for f in files if f]
+        return jsonify(vision.read_names(imgs, request.form.get("claude_key")))
+    except vision.VisionError as e:
+        return err(str(e))
 
 
 def run_job(job, key, world, guild, options):

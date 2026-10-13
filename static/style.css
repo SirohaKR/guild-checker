@@ -111,6 +111,24 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-w
 
 .form-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); align-items: end; }
 .form-grid .span2 { grid-column: span 2; }
+.form-grid .span4 { grid-column: 1 / -1; }
+textarea { font: inherit; color: var(--text); background: var(--panel-2); width: 100%; resize: vertical;
+  border: 1px solid var(--line); border-radius: 11px; padding: 9px 11px; }
+textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.drop { border: 2px dashed var(--line); border-radius: 14px; padding: 16px; background: var(--panel-2); cursor: pointer;
+  display: flex; flex-direction: column; gap: 10px; transition: border-color .15s, background .15s; }
+.drop:hover, .drop:focus, .drop.over { border-color: var(--accent); background: var(--accent-soft); outline: none; }
+.drop.busy { cursor: progress; opacity: .7; }
+.drop-msg { font-size: 13.5px; }
+.thumbs { display: flex; gap: 8px; flex-wrap: wrap; }
+.thumbs:empty { display: none; }
+.thumbs img { height: 110px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); }
+.verdict { border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px; font-weight: 800; font-size: 16px;
+  display: flex; flex-direction: column; gap: 4px; }
+.verdict span { font-weight: 600; font-size: 13px; }
+.verdict.ok { background: var(--ok-soft); color: var(--ok); }
+.verdict.bad { background: var(--dual-soft); color: var(--dual); border: 2px solid var(--dual); }
+.verdict.warn { background: var(--gold-soft); color: var(--gold); }
 .key-row { display: flex; gap: 6px; }
 .key-row button { flex: none; }
 .check-label { flex-direction: row; align-items: center; gap: 8px; color: var(--text); font-size: 14px;

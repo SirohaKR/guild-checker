@@ -8,6 +8,10 @@ services:
       - TZ=Asia/Seoul
       # - WORKERS=8        # 넥슨 API를 동시에 몇 개씩 부를지
       # - REP_TTL_DAYS=3   # 유니온 대표 캐릭터 결과를 며칠 동안 다시 쓸지
+      # 스크린샷 닉네임 읽기용 Claude API 키 — 같은 폴더의 .env 파일에 ANTHROPIC_API_KEY=sk-ant-... 로 적으면 들어감
+      # (안 넣으면 화면에서 매번 입력)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # - CLAUDE_MODEL=claude-haiku-5-5   # 더 싸게 (기본 claude-opus-5-5)
     ports:
       - "5080:5000"
     volumes:

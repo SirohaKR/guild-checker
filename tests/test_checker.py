@@ -105,5 +105,72 @@ from datetime import datetime  # noqa: E402
 check(checker.data_date(datetime(2026, 10, 12, 1, 59, tzinfo=checker.KST)) == "2026-10-10", "새벽 2시 전 → 그제")
 check(checker.data_date(datetime(2026, 10, 12, 2, 0, tzinfo=checker.KST)) == "2026-10-11", "새벽 2시 이후 → 어제")
 
+print("7) 가입 확인 (이름 조회)")
+mock_nexon.calls.clear()
+r = checker.lookup(nexon.Client("test-key"), store, ["부캐B1", "부캐B2", "남의본캐B", "없는사람"], "단풍잎")
+by = {x["name"]: x for x in r["results"]}
+check(by["부캐B1"]["world"] == "스카니아", "월드를 캐릭터 정보에서 알아냄")
+check(by["부캐B1"]["dual"] and by["부캐B1"]["rep_other_guild"] and not by["부캐B1"]["other_guild"],
+      "부캐B1: 자신은 우리 길드, 대표가 다른길드 → 표시")
+check(by["남의본캐B"]["other_guild"] and by["남의본캐B"]["is_rep"], "남의본캐B: 다른 길드 대표 캐릭터 → 표시")
+check(not by["없는사람"]["found"], "없는 이름 → 찾을 수 없음")
+check(r["summary"]["accounts"] == 1 and set(by["부캐B1"]["same_account"]) == {"부캐B2", "남의본캐B"}, "세 캐릭터가 한 계정")
+r = checker.lookup(nexon.Client("test-key"), store, ["본캐A", "부캐A1", "본캐C"], "단풍잎")
+check(r["summary"]["dual"] == 0 and r["summary"]["accounts"] == 2, "정상 길드원 → 다른 길드 없음, 계정 2개")
+r = checker.lookup(nexon.Client("test-key"), store, ["부캐C1"], "")
+check(r["results"][0]["dual"], "우리 길드 안 넣어도: 캐릭터와 대표 길드가 다르면 표시")
+r = checker.lookup(nexon.Client("test-key"), store, ["부캐C1"], "다른길드")
+check(r["results"][0]["rep_other_guild"] and not r["results"][0]["other_guild"], "부캐C1로 '다른길드' 가입 신청: 대표가 단풍잎 → 표시")
+
+print("8) 스크린샷 읽기 (Claude는 가짜로)")
+import vision  # noqa: E402
+
+
+class FakeResp:
+    stop_reason = "end_turn"
+    model = "fake"
+
+    class usage:
+        input_tokens, output_tokens = 1234, 56
+
+    def __init__(self, text):
+        self.content = [type("B", (), {"type": "text", "text": text})()]
+
+
+sent = {}
+
+
+class FakeClient:
+    def __init__(self, api_key):
+        sent["key"] = api_key
+        self.beta = self
+        self.messages = self
+
+    def create(self, **kw):
+        sent["kw"] = kw
+        return FakeResp('{"characters":[{"name":"본캐 A","level":285,"world":"스카니아","guild":"","unsure":false},'
+                        '{"name":"본캐A","level":0,"world":"","guild":"","unsure":false},'
+                        '{"name":"부캐A1","level":0,"world":"","guild":"","unsure":true}],"note":"핸즈 목록"}')
+
+
+real = vision.anthropic.Anthropic
+vision.anthropic.Anthropic = FakeClient
+os.environ.pop("ANTHROPIC_API_KEY", None)
+try:
+    vision.read_names([(b"x", "image/jpeg")], "")
+    check(False, "키 없으면 오류")
+except vision.VisionError as e:
+    check("키" in str(e), "Claude 키 없으면 알기 쉬운 오류")
+out = vision.read_names([(b"x", "image/jpeg"), (b"y", "image/png")], "sk-test")
+check([c["name"] for c in out["characters"]] == ["본캐A", "부캐A1"], "이름 공백 제거 + 중복 제거")
+imgs = [b for b in sent["kw"]["messages"][0]["content"] if b["type"] == "image"]
+check(len(imgs) == 2 and out["usage"]["input"] == 1234, "여러 장을 한 번에 보냄, 토큰 사용량 돌려줌")
+try:
+    vision.read_names([(b"x", "image/bmp")], "sk-test")
+    check(False, "bmp 오류")
+except vision.VisionError:
+    check(True, "지원 안 하는 형식 거절")
+vision.anthropic.Anthropic = real
+
 srv.shutdown()
 print(f"\n모두 통과 ({ok}개)")
