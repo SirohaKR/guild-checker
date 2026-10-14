@@ -192,24 +192,24 @@
       <div class="key-now" id="nexonNow"></div>
       <div class="form-grid">
         <label class="span2">새 키 넣기 <span class="muted">(바꿀 때만)</span>
-          <input id="sNexon" type="password" autocomplete="off" placeholder="test_… 또는 live_…">
+          <input id="sNexon" type="password" autocomplete="off" placeholder="live_…">
         </label>
       </div>
       <details class="howto" open>
-        <summary>넥슨 API 키 받는 방법 (무료, 3분)</summary>
+        <summary>넥슨 API 키 받는 방법 (무료) — 꼭 '서비스 단계'로</summary>
         <ol>
           <li><a href="https://openapi.nexon.com/ko/" target="_blank" rel="noopener">openapi.nexon.com</a> 오른쪽 위 <b>로그인</b> (넥슨 계정)</li>
           <li><b>내 애플리케이션</b> → <b>애플리케이션 등록</b></li>
-          <li>게임은 <b>메이플스토리</b>, 종류는 <b>개발 단계</b>(서비스 이름만 넣으면 돼요, 예: 길드 관리) → 약관 동의 → 등록</li>
-          <li><b>내 애플리케이션</b> → <b>애플리케이션 목록</b> → 만든 것을 눌러 나오는 <b>API Key</b>(보통 <code>test_</code>로 시작)를 복사해서 위 칸에 붙여넣고 <b>저장</b></li>
+          <li>게임은 <b>메이플스토리</b>, 종류는 <b>서비스 단계</b>를 고르고 서비스 이름(예: 우리 길드원 관리), 개발 환경(웹), URL(이 사이트 주소), 설명, 대표 이미지를 넣은 뒤 약관 동의 → 등록</li>
+          <li><b>내 애플리케이션</b> → <b>애플리케이션 목록</b> → 만든 것을 눌러 나오는 <b>API Key</b>(<code>live_</code>로 시작)를 복사해서 위 칸에 붙여넣고 <b>저장</b></li>
         </ol>
-        <p class="muted">하루 호출 한도는 그 애플리케이션 화면에 나와요. 많이 쓰면 '서비스 단계'로 바꿔 한도를 늘릴 수 있어요(<code>live_</code> 키).</p>
+        <p class="muted">개발 단계 키(<code>test_</code>)는 하루 호출 한도가 너무 적어서 길드원 검색 한 번도 버거워요. 한도는 애플리케이션 화면에서 볼 수 있어요.</p>
       </details>
 
       <h3>Claude API 키 <span class="muted">— 스크린샷 닉네임 읽기 (선택)</span></h3>
       <div class="key-now" id="claudeNow"></div>
       <div class="form-grid">
-        <label class="span2">새 키 넣기 <span class="muted">(바꿀 때만)</span>
+        <label class="span2"><span><span id="claudeLabel">새 키 넣기</span> <span class="muted" id="claudeHint">(바꿀 때만)</span></span>
           <input id="sClaude" type="password" autocomplete="off" placeholder="sk-ant-…">
         </label>
         <label>이미지 읽기 모델

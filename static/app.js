@@ -98,7 +98,16 @@ function paintSettings() {
   const keyNow = (k, env) => (k ? `지금 키: <code>${esc(k)}</code>${env ? " <span class='muted'>(.env에서 읽음)</span>" : ""}
       <button type="button" class="ghost small" data-clear="${env ? "" : "1"}">지우기</button>` : `<span class="muted">아직 없어요</span>`);
   $("#nexonNow").innerHTML = keyNow(cfg.nexon_key, cfg.nexon_from_env);
-  $("#claudeNow").innerHTML = keyNow(cfg.claude_key, cfg.claude_from_env);
+  $("#claudeNow").innerHTML = cfg.claude_source === "shared"
+    ? `<span class="badge ok">공용 키 사용 중</span> <span class="muted">길드에서 같이 쓰는 키예요. 개인 키를 아래에 저장하면 그걸 먼저 써요.</span>`
+    : cfg.claude_source === "personal" && me.mode === "shared"
+      ? `<span class="badge acc-c">개인 키 사용 중</span> <code>${esc(cfg.claude_key)}</code>
+         <button type="button" class="ghost small" data-clear="1">개인 키 지우기 (공용 키로)</button>`
+      : keyNow(cfg.claude_key, cfg.claude_from_env);
+  $("#claudeLabel").textContent = me.mode === "shared" ? "개인 키 넣기" : "새 키 넣기";
+  $("#claudeHint").textContent = me.mode === "shared"
+    ? (cfg.claude_source === "personal" ? "(바꿀 때만)" : "(넣으면 공용 키 대신 이 키를 써요)")
+    : "(바꿀 때만)";
   $("#nexonNow").querySelector("[data-clear]")?.addEventListener("click", () => clearKey("nexon_key", cfg.nexon_from_env));
   $("#claudeNow").querySelector("[data-clear]")?.addEventListener("click", () => clearKey("claude_key", cfg.claude_from_env));
   const ours = cfg.guild ? `${esc(cfg.guild)} <small>${esc(cfg.world)}</small>` : `<span class="muted">설정에서 정해 주세요</span>`;
@@ -211,7 +220,7 @@ $("#gateLogin").onsubmit = async (e) => {
 };
 async function clearKey(k, fromEnv) {
   if (fromEnv) return toast(".env 파일에 있는 키예요. .env에서 지워 주세요.", true);
-  if (!confirm("이 키를 지울까요?")) return;
+  if (!confirm(k === "claude_key" && me.mode === "shared" ? "개인 키를 지우고 공용 키를 쓸까요?" : "이 키를 지울까요?")) return;
   cfg = await api("/api/settings", { method: "POST", body: JSON.stringify({ ["clear_" + k]: true }) });
   paintSettings();
   toast("지웠어요");

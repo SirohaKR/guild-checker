@@ -60,6 +60,20 @@ check(len(a.get("/api/scans").json) == 1 and len(b.get("/api/scans").json) == 0,
 b.post("/api/settings", json={"clear_nexon_key": True})
 check(b.get("/api/settings").json["nexon_key"] == "", "같이 쓰기에선 .env 키를 남에게 빌려주지 않음")
 
+print("3-2) Claude 공용 키 (.env) / 개인 키")
+os.environ["ANTHROPIC_API_KEY"] = "sk-ant-guild-shared-key-0000"
+r = b.get("/api/settings").json
+check(r["claude_source"] == "shared" and r["claude_key"] == "", "개인 키 없으면 공용 키 사용 중 (키는 안 보여줌)")
+check(web.settings(web.store.get_user(username="부길마")["id"])["claude_key"].endswith("0000"), "실제로 공용 키로 이미지 읽기")
+b.post("/api/settings", json={"claude_key": "sk-ant-my-own-key-9999"})
+r = b.get("/api/settings").json
+check(r["claude_source"] == "personal" and r["claude_key"].endswith("9999"), "개인 키를 저장하면 개인 키 사용")
+check(a.get("/api/settings").json["claude_source"] == "shared", "다른 계정은 그대로 공용 키")
+b.post("/api/settings", json={"clear_claude_key": True})
+check(b.get("/api/settings").json["claude_source"] == "shared", "개인 키를 지우면 다시 공용 키")
+del os.environ["ANTHROPIC_API_KEY"]
+check(b.get("/api/settings").json["claude_source"] == "none", ".env에 공용 키가 없으면 '없음'")
+
 print("4) 비밀번호 바꾸기 · 초기화 · 계정 삭제 · 로그아웃")
 check(b.post("/api/me/password", json={"current": "pass123", "new": "newpass1"}).status_code == 200, "내 비밀번호 바꾸기")
 uid = web.store.get_user(username="부길마")["id"]

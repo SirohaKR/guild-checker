@@ -208,15 +208,17 @@ def delete_user(u, uid):
 
 
 # ── 계정별 설정 (data/guild.db) ──
-# 혼자 쓰기: 설정 탭 값이 먼저, 없으면 .env(환경변수). 같이 쓰기: 계정마다 설정 탭 값만.
+# 설정 탭 값이 먼저, 없으면 .env(환경변수).
+#  - 넥슨 키: 같이 쓰기에서는 .env를 쓰지 않는다 (계정마다 자기 키)
+#  - Claude 키: 같이 쓰기에서 .env 키는 '공용 키' — 개인 키를 저장한 계정은 개인 키, 아니면 공용 키
 
 def settings(uid):
     s = store.get_settings(uid)
-    env = (lambda k, d="": os.environ.get(k, d)) if mode() == "solo" else (lambda k, d="": d)
+    solo = mode() == "solo"
     return {
-        "nexon_key": s.get("nexon_key") or env("NEXON_API_KEY"),
-        "claude_key": s.get("claude_key") or env("ANTHROPIC_API_KEY"),
-        "claude_model": s.get("claude_model") or env("CLAUDE_MODEL") or vision.DEFAULT_MODEL,
+        "nexon_key": s.get("nexon_key") or (os.environ.get("NEXON_API_KEY", "") if solo else ""),
+        "claude_key": s.get("claude_key") or os.environ.get("ANTHROPIC_API_KEY", ""),
+        "claude_model": s.get("claude_model") or os.environ.get("CLAUDE_MODEL") or vision.DEFAULT_MODEL,
         "world": s.get("world") or "",
         "guild": s.get("guild") or "",
     }
@@ -250,12 +252,23 @@ def index():
 def get_settings(u):
     s = settings(u["id"])
     saved = store.get_settings(u["id"])
+    shared = mode() == "shared"
+    # Claude 키 출처: personal(내가 저장) / shared(같이 쓰기의 공용 .env 키) / env(혼자 쓰기의 .env) / none
+    if saved.get("claude_key"):
+        claude_source = "personal"
+    elif s["claude_key"]:
+        claude_source = "shared" if shared else "env"
+    else:
+        claude_source = "none"
     return jsonify({
         "world": s["world"], "guild": s["guild"], "claude_model": s["claude_model"],
-        "nexon_key": mask(s["nexon_key"]), "claude_key": mask(s["claude_key"]),
+        "nexon_key": mask(s["nexon_key"]),
+        # 공용 키는 앞뒤 글자도 보여주지 않는다
+        "claude_key": "" if claude_source == "shared" else mask(s["claude_key"]),
+        "claude_source": claude_source,
         # 키가 .env에서 온 것인지 (설정 탭에서 지워도 .env 값이 남는다)
         "nexon_from_env": bool(s["nexon_key"]) and not saved.get("nexon_key"),
-        "claude_from_env": bool(s["claude_key"]) and not saved.get("claude_key"),
+        "claude_from_env": claude_source == "env",
     })
 
 
