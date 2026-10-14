@@ -3,8 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>이중길드 검사기</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍁</text></svg>">
+  <title>우리 길드원 관리</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg', v=asset_v) }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='logo.svg', v=asset_v) }}">
   <script>
     // 깜빡임 없이 저장된 테마 먼저 적용
     try { const t = localStorage.getItem("gc_theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
@@ -13,37 +14,36 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="leaf">🍁</span>이중길드 <b>검사기</b></div>
+  <a class="brand" href="#members">
+    <img class="logo" src="{{ url_for('static', filename='logo.svg', v=asset_v) }}" alt="">
+    <span class="title"><em>우</em>리 <em>길</em>드원 <em>관</em>리</span>
+  </a>
   <nav>
-    <a href="#check" data-view="check" class="on">검사</a>
-    <a href="#lookup" data-view="lookup">가입 확인</a>
-    <a href="#history" data-view="history">지난 기록</a>
+    <a href="#members" data-view="members" class="on">길드원 검색</a>
+    <a href="#chars" data-view="chars">캐릭터명 검색</a>
+    <a href="#guild" data-view="guild">길드 검색</a>
+    <a href="#settings" data-view="settings">설정</a>
   </nav>
   <button class="theme-btn" id="themeBtn" type="button" title="라이트/다크 전환"></button>
 </header>
 
 <main>
-  <!-- 검사 화면 -->
-  <section id="view-check">
+  <div id="needSetup" class="card setup-banner" hidden>
+    <b>처음이신가요?</b> <span>'설정' 탭에서 넥슨 API 키와 우리 길드를 먼저 정해 주세요.</span>
+    <a href="#settings" class="btn primary">설정하러 가기</a>
+  </div>
+
+  <!-- 길드원 검색: 우리 길드 심층 검사 -->
+  <section id="view-members">
     <form id="scanForm" class="card form-card">
+      <div class="our-line">
+        <div><div class="label">우리 길드</div><div class="our-guild" id="ourGuild">—</div></div>
+        <a href="#settings" class="muted small">바꾸기</a>
+      </div>
       <div class="form-grid">
-        <label class="span2">넥슨 API 키
-          <div class="key-row">
-            <input id="apiKey" type="password" autocomplete="off" placeholder="test_… 또는 live_…" required>
-            <button type="button" id="keyShow" class="ghost" title="키 보기">보기</button>
-          </div>
-        </label>
-        <label>월드
-          <select id="world">
-            {% for w in worlds %}<option>{{ w }}</option>{% endfor %}
-          </select>
-        </label>
-        <label>길드 이름
-          <input id="guild" placeholder="예: 단풍잎" required>
-        </label>
-        <label>역방향 검사
+        <label>역방향 검사 범위
           <select id="reverse">
-            <option value="0">끔 (우리 길드만)</option>
+            <option value="0">끔 (의심 길드만 심층 확인)</option>
             <option value="50">길드 랭킹 상위 50개</option>
             <option value="200">상위 200개</option>
             <option value="1000">상위 1000개</option>
@@ -51,70 +51,134 @@
           </select>
         </label>
         <label class="check-label"><input type="checkbox" id="activity"> 30일 성장 확인</label>
-        <button class="primary big" id="scanBtn" type="submit">검사</button>
+        <button class="primary big" id="scanBtn" type="submit">검색</button>
       </div>
-      <p class="hint">API 키는 <b>어디에도 저장되지 않아요</b>. 검사할 때만 서버로 보내고, 검사가 끝나면 바로 버려요 (매번 입력).
-        역방향은 “본캐는 우리 길드, 부캐는 다른 길드”를 찾으려고 다른 길드원까지 확인해요.</p>
+      <p class="hint">검색하면 ① 길드원 정보를 <b>최신으로 갱신</b>하고 ② 계정마다 유니온 대표(본캐)를 찾아 묶은 뒤
+        ③ 본캐가 다른 길드에 있으면 <b>그 길드의 길드원 목록과 대조</b>하고, 그 길드원 전부를 확인해 부캐가 더 있는지까지 봐요(심층).
+        역방향은 길드 랭킹 상위 길드까지 넓혀서 “본캐는 우리 길드, 부캐는 다른 길드”를 찾아요.</p>
     </form>
 
     <div id="progress" class="card progress" hidden></div>
     <div id="result"></div>
+
+    <div class="sec-title"><h3>지난 검색 기록</h3><span class="muted">누르면 다시 보고, 지난번과 비교해요</span></div>
+    <div id="historyList" class="history-grid"></div>
   </section>
 
-  <!-- 가입 확인 (이름 조회) -->
-  <section id="view-lookup" hidden>
+  <!-- 캐릭터명 검색 (가입 신청자 확인) -->
+  <section id="view-chars" hidden>
     <form id="lookupForm" class="card form-card">
+      <div class="our-line">
+        <div><div class="label">우리 길드</div><div class="our-guild" id="ourGuild2">—</div></div>
+        <span class="muted small">이 길드 말고 다른 길드에 있는 캐릭터를 찾아요</span>
+      </div>
       <div class="form-grid">
-        <label class="span2">넥슨 API 키
-          <input id="lkKey" type="password" autocomplete="off" placeholder="test_… 또는 live_…" required>
-        </label>
-        <label class="span2"><span>우리 길드 이름 <span class="muted">(선택 — 넣으면 다른 길드 캐릭터를 바로 표시)</span></span>
-          <input id="lkGuild" placeholder="예: 단풍잎">
-        </label>
-        {% if not claude_key_on_server %}
-        <label class="span2"><span>Claude API 키 <span class="muted">(스크린샷 읽기용 · 서버에 ANTHROPIC_API_KEY를 넣으면 이 칸이 사라져요)</span></span>
-          <input id="lkClaude" type="password" autocomplete="off" placeholder="sk-ant-…">
-        </label>
-        {% endif %}
         <div class="span4 review">
-        <div class="review-left">
-        <div class="drop" id="drop" tabindex="0">
-          <input type="file" id="lkFiles" accept="image/*" multiple hidden>
-          <input type="file" id="lkFolder" webkitdirectory multiple hidden>
-          <div class="drop-msg"><b>① 핸즈 스크린샷 올리기</b>
-            <span class="desk muted">— 여기에 끌어다 놓거나 <b>Ctrl+V</b>로 붙여넣어도 돼요 · 최대 10장 · 올린 그림을 누르면 크게 보여요</span>
-            <span class="touch muted">— 여러 장 한꺼번에 고를 수 있어요 · 최대 10장 · 올린 그림을 누르면 크게 보여요</span></div>
-          <div class="pick-row">
-            <button type="button" class="primary touch-only" id="pickGallery">🖼 갤러리 열기</button>
-            <button type="button" class="ghost desk-only" id="pickFiles">📄 사진 고르기</button>
-            <button type="button" class="ghost desk-only" id="pickFolder">📁 폴더째 넣기</button>
+          <div class="review-left">
+            <div class="drop" id="drop" tabindex="0">
+              <input type="file" id="lkFiles" accept="image/*" multiple hidden>
+              <input type="file" id="lkFolder" webkitdirectory multiple hidden>
+              <div class="drop-msg"><b>① 핸즈 스크린샷 올리기</b>
+                <span class="desk muted">— 여기에 끌어다 놓거나 <b>Ctrl+V</b>로 붙여넣어도 돼요 · 최대 10장 · 올린 그림을 누르면 크게 보여요</span>
+                <span class="touch muted">— 여러 장 한꺼번에 고를 수 있어요 · 최대 10장 · 올린 그림을 누르면 크게 보여요</span></div>
+              <div class="pick-row">
+                <button type="button" class="primary touch-only" id="pickGallery">갤러리 열기</button>
+                <button type="button" class="ghost desk-only" id="pickFiles">사진 고르기</button>
+                <button type="button" class="ghost desk-only" id="pickFolder">폴더째 넣기</button>
+              </div>
+              <div class="thumbs" id="thumbs"></div>
+            </div>
+            <div class="read-row">
+              <button type="button" class="primary" id="readBtn" disabled>② 닉네임 읽기</button>
+              <button type="button" class="ghost" id="clearShots" hidden>스크린샷 모두 빼기</button>
+              <span class="muted" id="readMsg"></span>
+            </div>
           </div>
-          <div class="thumbs" id="thumbs"></div>
-        </div>
-        <div class="read-row">
-          <button type="button" class="primary" id="readBtn" disabled>② 닉네임 읽기</button>
-          <button type="button" class="ghost" id="clearShots" hidden>스크린샷 모두 빼기</button>
-          <span class="muted" id="readMsg"></span>
-        </div>
-        </div>
-        <label class="review-right"><span>③ 읽은 닉네임 검수 <span class="muted">— 스크린샷과 비교해서 틀린 글자는 고치고, 빠진 건 줄마다 추가 (최대 60명)</span>
-            <b id="nameCount" class="name-count"></b></span>
-          <textarea id="lkNames" rows="12" placeholder="닉네임 읽기를 누르면 여기에 한 줄에 하나씩 들어와요.&#10;직접 적어도 돼요." required></textarea>
-          <span class="unsure" id="unsure" hidden></span>
-        </label>
+          <label class="review-right"><span>③ 닉네임 검수 <span class="muted">— 스크린샷과 비교해서 틀린 글자는 고치고, 빠진 건 줄마다 추가 (직접 적어도 돼요, 최대 60명)</span>
+              <b id="nameCount" class="name-count"></b></span>
+            <textarea id="lkNames" rows="12" placeholder="닉네임 읽기를 누르면 여기에 한 줄에 하나씩 들어와요.&#10;직접 적어도 돼요." required></textarea>
+            <span class="unsure" id="unsure" hidden></span>
+          </label>
         </div>
         <button class="primary big" id="lkBtn" type="submit">④ 조회</button>
       </div>
-      <p class="hint">캐릭터마다 길드와 그 계정의 <b>유니온 대표 캐릭터</b>(보통 본캐)·대표의 길드를 보여줘요. 월드는 캐릭터에서 자동으로 알아내요.
-        넣은 이름들이 몇 개 계정인지도 알려줘요(핸즈 목록이면 1개여야 정상). 키는 <b>어디에도 저장되지 않아요.</b></p>
+      <p class="hint">조회하면 캐릭터마다 <b>최신 정보로 갱신</b>한 뒤 길드와 유니온 대표(본캐)·대표의 길드를 보여줘요.
+        다른 길드에 있다고 나오면 <b>그 길드의 길드원 목록과 대조</b>해서 확실한지(포착), 정보가 옛날 건지(갱신 필요) 가려요.</p>
     </form>
     <div id="lookupResult"></div>
   </section>
 
-  <!-- 지난 기록 -->
-  <section id="view-history" hidden>
-    <h2>지난 검사 기록</h2>
-    <div id="historyList" class="history-grid"></div>
+  <!-- 길드 검색 (의심 길드 들여다보기) -->
+  <section id="view-guild" hidden>
+    <form id="guildForm" class="card form-card">
+      <div class="form-grid">
+        <label>월드
+          <select id="gWorld">
+            {% for w in worlds %}<option>{{ w }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>길드 이름
+          <input id="gName" placeholder="예: 다른길드" required>
+        </label>
+        <label class="span2">찾을 계정 <span class="muted">(선택 — 유니온 대표 캐릭터 이름, 쉼표로 여러 명)</span>
+          <input id="gFocus" placeholder="예: 쨋뀨">
+        </label>
+        <button class="primary big" id="gBtn" type="submit">길드 검색</button>
+      </div>
+      <p class="hint">그 길드의 <b>최신</b> 길드원 목록을 받아서 계정(유니온 대표)별로 묶어 보여줘요.
+        '찾을 계정'을 넣으면 그 사람의 캐릭터가 이 길드에 몇 명 있는지 맨 위에 보여줘요. 의심 결과의 [길드 검색] 버튼을 누르면 자동으로 채워져요.</p>
+    </form>
+    <div id="gProgress" class="card progress" hidden></div>
+    <div id="guildResult"></div>
+  </section>
+
+  <!-- 설정 -->
+  <section id="view-settings" hidden>
+    <form id="settingsForm" class="card form-card settings">
+      <h3>우리 길드</h3>
+      <div class="form-grid">
+        <label>월드
+          <select id="sWorld">
+            <option value="">고르세요</option>
+            {% for w in worlds %}<option>{{ w }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>우리 길드 이름
+          <input id="sGuild" placeholder="예: 단풍잎">
+        </label>
+      </div>
+
+      <h3>넥슨 API 키 <span class="muted">— 길드·캐릭터 정보 조회 (필수)</span></h3>
+      <div class="key-now" id="nexonNow"></div>
+      <div class="form-grid">
+        <label class="span2">새 키 넣기 <span class="muted">(바꿀 때만)</span>
+          <input id="sNexon" type="password" autocomplete="off" placeholder="test_… 또는 live_…">
+        </label>
+      </div>
+      <p class="hint">발급: <a href="https://openapi.nexon.com/ko/" target="_blank" rel="noopener">넥슨 Open API</a> → 로그인 → 애플리케이션 등록 → 메이플스토리 API 키</p>
+
+      <h3>Claude API 키 <span class="muted">— 스크린샷 닉네임 읽기 (선택)</span></h3>
+      <div class="key-now" id="claudeNow"></div>
+      <div class="form-grid">
+        <label class="span2">새 키 넣기 <span class="muted">(바꿀 때만)</span>
+          <input id="sClaude" type="password" autocomplete="off" placeholder="sk-ant-…">
+        </label>
+        <label>이미지 읽기 모델
+          <select id="sModel">
+            {% for m in models %}<option>{{ m }}</option>{% endfor %}
+          </select>
+        </label>
+      </div>
+      <p class="hint">발급: <a href="https://console.anthropic.com/" target="_blank" rel="noopener">Claude Console</a> → API Keys.
+        모델: opus(가장 정확, 스크린샷 4장에 약 150~250원) · sonnet(중간) · haiku(가장 쌈, 드문 글자를 자주 틀림).</p>
+
+      <div class="row-end">
+        <button type="button" class="ghost" id="testBtn">넥슨 키로 우리 길드 찾아보기</button>
+        <button class="primary big" type="submit">저장</button>
+      </div>
+      <p class="hint">설정은 서버의 <code>data/guild.db</code>에 저장돼서 다음에도 그대로 유지돼요. 키는 화면에 앞뒤 몇 글자만 보여줘요.
+        이 파일엔 키가 들어 있으니 남에게 주지 마세요.</p>
+    </form>
   </section>
 </main>
 

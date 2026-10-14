@@ -1,13 +1,13 @@
 # 스크린샷(메이플 핸즈 캐릭터 목록 등)에서 캐릭터 닉네임을 읽어 오는 곳 — Claude API(이미지 인식)를 쓴다.
 # 읽은 이름은 그대로 믿지 않고, 이름 조회(checker.lookup)에서 넥슨 API로 하나하나 확인한다.
-# Claude API 키: 서버 환경변수 ANTHROPIC_API_KEY가 있으면 그걸 쓰고, 없으면 화면에서 넣은 키를 이 요청에서만 쓴다.
+# Claude API 키·모델은 '설정' 화면 값(없으면 .env의 ANTHROPIC_API_KEY / CLAUDE_MODEL)을 app.py가 넘겨준다.
 import base64
 import json
-import os
 
 import anthropic
 
-MODEL = os.environ.get("CLAUDE_MODEL") or "claude-opus-5-5"  # 비어 있으면 기본값
+DEFAULT_MODEL = "claude-opus-5-5"
+MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]  # 설정 화면에서 고르는 목록
 MAX_IMAGES = 10
 MAX_BYTES = 5 * 1024 * 1024  # Claude API 이미지 한 장 한도
 MEDIA_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
@@ -59,15 +59,11 @@ class VisionError(Exception):
     pass
 
 
-def has_server_key():
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
-
-
-def read_names(images, api_key=None):
-    """images: [(바이트, media_type)] → {'characters': [...], 'note': str}"""
-    key = os.environ.get("ANTHROPIC_API_KEY") or (api_key or "").strip()
+def read_names(images, api_key, model=None):
+    """images: [(바이트, media_type)] → {'characters': [...], 'note': str, 'shown_count': int, 'usage': {...}}"""
+    key = (api_key or "").strip()
     if not key:
-        raise VisionError("Claude API 키가 없어요. 화면에 넣거나 서버 환경변수 ANTHROPIC_API_KEY를 설정해 주세요.")
+        raise VisionError("Claude API 키가 없어요. '설정' 탭에서 넣어 주세요.")
     if not images:
         raise VisionError("이미지를 넣어 주세요.")
     if len(images) > MAX_IMAGES:
@@ -86,7 +82,7 @@ def read_names(images, api_key=None):
     client = anthropic.Anthropic(api_key=key)
     try:
         resp = client.beta.messages.create(
-            model=MODEL,
+            model=model or DEFAULT_MODEL,
             max_tokens=8000,
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",  # 드물게 거절되면 다른 Claude 모델로 자동으로 다시 시도

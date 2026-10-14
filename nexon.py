@@ -1,6 +1,6 @@
 # 넥슨 오픈 API(메이플스토리) 클라이언트 — 이 앱이 쓰는 주소만 모아 둔 곳.
 # 문서: https://openapi.nexon.com/ko/game/maplestory/
-# API 키는 사용자가 화면에서 넣고, 검사할 때만 서버로 넘어온다 (어디에도 저장하지 않음).
+# API 키는 '설정' 화면에서 넣고 data/guild.db에 저장된다. 넥슨에는 요청 헤더로만 보낸다.
 import os
 import threading
 import time
@@ -84,7 +84,8 @@ class Client:
                 return None
             raise
 
-    def guild_basic(self, oguild_id, date):
+    def guild_basic(self, oguild_id, date=None):
+        """길드 기본 정보 + 길드원 목록. date를 안 주면 최신 정보."""
         return self.get("/guild/basic", {"oguild_id": oguild_id, "date": date})
 
     def union_rep(self, ocid, world, date):
@@ -92,7 +93,8 @@ class Client:
         rows = self.get("/ranking/union", {"date": date, "world_name": world, "ocid": ocid}).get("ranking") or []
         return rows[0] if rows else None
 
-    def character_basic(self, ocid, date):
+    def character_basic(self, ocid, date=None):
+        """캐릭터 기본 정보(길드·레벨·이미지). date를 안 주면 최신 정보 (그 캐릭터로 접속하면 갱신된다)."""
         return self.get("/character/basic", {"ocid": ocid, "date": date})
 
     def guild_ranking(self, world, date, page):

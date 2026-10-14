@@ -22,10 +22,11 @@ STALE = set()          # 30일 동안 성장 없는 캐릭터
 GUILD_MEMBERS = {}     # 길드 이름 → [이름]
 
 
-def add(name, account, guild, level, away=False):
+def add(name, account, guild, level, away=False, listed=True):
+    """listed=False: 캐릭터 정보엔 그 길드로 나오지만 길드원 목록엔 없음 (정보가 옛날 것 — 접속해서 갱신 필요)"""
     CHARS[name] = {"account": account, "guild": guild, "level": level,
                    "job": JOBS[hash(name) % len(JOBS)], "exp": level * 1000 + len(name), "away": away}
-    if guild:
+    if guild and listed:
         GUILD_MEMBERS.setdefault(guild, []).append(name)
 
 
@@ -49,6 +50,8 @@ add("쨋뀨", "H", "", 290); add("췐쀼", "H", "", 260); add("쨋뀨유뇬7", "
 ACCOUNT_REP["H"] = "쨋뀨"
 # 남의 캐릭터인데 이름이 비슷한 것 (제안할 때 '다른 계정'으로 보여야 함)
 add("췐부", "Z", "세번째길드", 230); ACCOUNT_REP["Z"] = "췐부"
+# S: 가입 신청자 — 부캐 정보엔 '세번째길드'로 나오지만 그 길드 목록엔 없음 (탈퇴 후 접속 안 해서 정보가 옛날 것)
+add("갱신필요S", "S", "", 270); add("갱신필요S부", "S", "세번째길드", 230, listed=False); ACCOUNT_REP["S"] = "갱신필요S"
 # 길드 목록에는 있는데 개명해서 /id가 안 되는 캐릭터
 GUILD_MEMBERS[OUR].append("개명한캐릭")
 # 세번째길드: 우리와 관계없는 사람들
@@ -77,9 +80,14 @@ calls_lock = threading.Lock()
 fail_once = {"union:부캐A2"}  # 처음 한 번은 429를 돌려서 재시도를 시험
 
 
+by_key = Counter()  # (주소, 이름/ocid/날짜) → 호출 수
+
+
 def count(path):
     with calls_lock:
         calls[path] += 1
+        key = request.args.get("character_name") or request.args.get("ocid") or request.args.get("oguild_id") or ""
+        by_key[(path, key, request.args.get("date") or "latest")] += 1
 
 
 def bad(msg="invalid", status=400):
@@ -181,6 +189,7 @@ def stats():
 @app.post("/_reset")
 def reset():
     calls.clear()
+    by_key.clear()
     return jsonify({"ok": True})
 
 

@@ -1,4 +1,9 @@
-/* 이중길드 검사기 — 단풍 테마 (라이트) / 밤 테마 (다크). 그라데이션 없이 단색만 쓴다. */
+/* 우리 길드원 관리 — 단풍 테마 (라이트) / 밤 테마 (다크). 그라데이션 없이 단색만 쓴다.
+   제목·탭·큰 숫자는 메이플스토리체(넥슨 무료 서체, 눈누 CDN), 본문은 Pretendard/맑은 고딕. */
+@font-face { font-family: "Maplestory"; font-weight: 700; font-display: swap;
+  src: url("https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_20-04@2.1/MaplestoryOTFBold.woff") format("woff"); }
+@font-face { font-family: "Maplestory"; font-weight: 300; font-display: swap;
+  src: url("https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_20-04@2.1/MaplestoryOTFLight.woff") format("woff"); }
 :root {
   --bg: #fbf2e8;
   --panel: #ffffff;
@@ -68,9 +73,14 @@ body {
   display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
   padding: 12px 24px; background: var(--panel); border-bottom: 1px solid var(--line);
 }
-.brand { display: flex; align-items: center; gap: 9px; font-weight: 800; font-size: 17px; letter-spacing: -.3px; }
-.brand .leaf { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: var(--accent-soft); font-size: 19px; }
-.brand b { color: var(--accent); }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; }
+.brand .logo { width: 38px; height: 38px; display: block; }
+.title { font-family: "Maplestory", inherit; font-weight: 700; font-size: 21px; letter-spacing: -.5px; white-space: nowrap; }
+.title em { font-style: normal; color: var(--accent); }
+/* 제목·탭·버튼·큰 숫자: 메이플스토리체 */
+h2, h3, nav a, .tile .value, .verdict, .flag, .our-guild, button.primary, .btn.primary, .sec-title .count, .welcome .num {
+  font-family: "Maplestory", "Pretendard Variable", Pretendard, "Malgun Gothic", sans-serif; }
+.verdict span { font-family: "Pretendard Variable", Pretendard, "Malgun Gothic", sans-serif; }
 nav { display: flex; gap: 4px; flex: 1; }
 nav a { padding: 7px 15px; border-radius: 999px; font-weight: 700; color: var(--muted); text-decoration: none; white-space: nowrap; text-align: center; }
 nav a:hover { color: var(--text); background: var(--accent-soft); }
@@ -196,6 +206,8 @@ textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3
 .tile.unk { --tc: var(--gold); }
 .tile.chars { --tc: var(--accent); }
 .tile.stale { --tc: var(--sky); }
+.tile.caught { --tc: var(--dual); }
+.tile .value small { font-size: 18px; color: var(--gold); }
 
 .diff { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .diff > div { background: var(--panel-2); border-radius: 12px; padding: 10px 12px; border: 1px solid var(--line); }
@@ -237,6 +249,8 @@ textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3
 .badge.ok { background: var(--ok-soft); color: var(--ok); }
 .badge.gold { background: var(--gold-soft); color: var(--gold); }
 .badge.sky { background: var(--sky-soft); color: var(--sky); }
+.badge.gray { background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+.badge.focus { background: var(--sky); color: #fff; }
 .badge.acc-c { background: var(--accent-soft); color: var(--accent); }
 
 /* 캐릭터 이미지: 넥슨 이미지는 여백이 많아서 가운데를 크게 잘라 칸에 꽉 차게 */
@@ -304,3 +318,42 @@ textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3
   .res-head h2 { font-size: 22px; }
   .tile .value { font-size: 24px; }
 }
+
+/* ── 설정 안내 · 우리 길드 줄 */
+.setup-banner { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border: 2px solid var(--accent); }
+.setup-banner span { flex: 1; min-width: 200px; }
+.btn { display: inline-flex; align-items: center; padding: 9px 16px; border-radius: 11px; font-weight: 700; text-decoration: none; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); }
+.our-line { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; margin-bottom: 14px;
+  padding-bottom: 12px; border-bottom: 1px dashed var(--line); }
+.our-line .label { font-size: 12px; font-weight: 700; color: var(--muted); }
+.our-guild { font-size: 22px; font-weight: 700; }
+.our-guild small { font-size: 13px; color: var(--muted); margin-left: 6px; }
+.small { font-size: 12.5px; }
+a { color: var(--accent); }
+
+/* ── 설정 탭 */
+.settings h3 { margin: 18px 0 10px; }
+.settings h3:first-child { margin-top: 0; }
+.settings h3 .muted { font-family: "Pretendard Variable", Pretendard, "Malgun Gothic", sans-serif; font-size: 12.5px; font-weight: 600; }
+.key-now { margin-bottom: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.key-now button.small { padding: 3px 10px; font-size: 12px; }
+code { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; font-size: 12.5px; }
+.settings .row-end { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+
+/* ── 의심 확인 줄 · 링크 */
+.acc .checks { padding: 0 14px 12px; display: flex; flex-direction: column; gap: 6px; }
+.check { font-size: 12.5px; padding: 7px 10px; border-radius: 10px; line-height: 1.45; }
+.check b { font-family: "Maplestory", sans-serif; margin-right: 4px; }
+.check.dual { background: var(--dual-soft); color: var(--dual); }
+.check.gold { background: var(--gold-soft); color: var(--gold); }
+.check.gray { background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+.links { display: flex; gap: 6px; flex-wrap: wrap; }
+.lnk { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; text-decoration: none;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+.lnk:hover { border-color: var(--accent); color: var(--accent); }
+.lnk.main { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.lnk.tiny { margin-left: auto; padding: 2px 8px; }
+.verdict .links { margin-top: 6px; }
+.acc.is-focus { outline: 3px solid var(--sky); outline-offset: 2px; }
+.alts .links { margin-top: 8px; }

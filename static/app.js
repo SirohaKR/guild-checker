@@ -1,4 +1,4 @@
-// 이중길드 검사기 화면 — 입력 받기, 진행률 보여주기, 결과 그리기
+// 우리 길드원 관리 — 화면: 길드원 검색 / 캐릭터명 검색 / 길드 검색 / 설정
 const $ = (s) => document.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const store = {
@@ -28,7 +28,7 @@ function currentTheme() {
     (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 }
 function paintThemeBtn() {
-  $("#themeBtn").textContent = currentTheme() === "dark" ? "☀️ 라이트" : "🌙 다크";
+  $("#themeBtn").textContent = currentTheme() === "dark" ? "라이트" : "다크";
 }
 $("#themeBtn").onclick = () => {
   const next = currentTheme() === "dark" ? "light" : "dark";
@@ -38,60 +38,129 @@ $("#themeBtn").onclick = () => {
 };
 paintThemeBtn();
 
+// ── 바깥 링크 / 길드 검색 링크 ──
+const meaegiChar = (n) => `https://meaegi.com/s/${encodeURIComponent(n)}`;
+const meaegiGuild = (g, w) => `https://meaegi.com/g/${encodeURIComponent(g)}/${encodeURIComponent(w)}`;
+const guildHash = (w, g, focus) => `#guild?w=${encodeURIComponent(w || "")}&g=${encodeURIComponent(g)}${focus ? `&f=${encodeURIComponent(focus)}` : ""}`;
+
+// 의심 캐릭터 밑에 붙는 버튼: [길드 검색] [메애기 캐릭터] [메애기 길드]
+function suspectLinks(name, guild, world, focus) {
+  const b = [];
+  if (guild) b.push(`<a class="lnk main" href="${guildHash(world, guild, focus)}">「${esc(guild)}」 길드 검색</a>`);
+  if (name) b.push(`<a class="lnk" href="${meaegiChar(name)}" target="_blank" rel="noopener">메애기: ${esc(name)}</a>`);
+  if (guild && world) b.push(`<a class="lnk" href="${meaegiGuild(guild, world)}" target="_blank" rel="noopener">메애기: ${esc(guild)}</a>`);
+  return `<div class="links">${b.join("")}</div>`;
+}
+
+// 다른 길드 대조 결과
+const CHECK = {
+  confirmed: ["dual", "포착", "그 길드의 길드원 목록에도 있어요"],
+  stale: ["gold", "정보 갱신 필요", "그 길드 목록엔 없어요 — 신청자에게 이 캐릭터로 한 번 접속해서 정보를 갱신해 달라고 해 주세요"],
+  unknown: ["gray", "확인 불가", "그 길드의 길드원 목록을 받지 못했어요 — 메애기에서 직접 확인해 주세요"],
+};
+function checkLine(c, name) {
+  const [cls, label, text] = CHECK[c.status] || CHECK.unknown;
+  return `<div class="check ${cls}"><b>${label}</b> <span>${esc(name)} → 「${esc(c.guild)}」 · ${text}</span></div>`;
+}
+
 // ── 화면 전환 ──
+const VIEWS = ["members", "chars", "guild", "settings"];
+const OLD = { "#check": "members", "#history": "members", "#lookup": "chars" };
+function route() {
+  const [h, q] = location.hash.split("?");
+  return { view: OLD[h] || VIEWS.find((v) => "#" + v === h) || "members", params: new URLSearchParams(q || "") };
+}
 function showView() {
-  const v = { "#history": "history", "#lookup": "lookup" }[location.hash] || "check";
-  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.view === v));
-  $("#view-check").hidden = v !== "check";
-  $("#view-lookup").hidden = v !== "lookup";
-  $("#view-history").hidden = v !== "history";
-  if (v === "lookup") {
-    // 검사 화면에서 넣은 키·월드를 이 화면에서도 쓰게 (메모리에서만, 저장 안 함)
-    if (!$("#lkKey").value) $("#lkKey").value = $("#apiKey").value;
-    if (!$("#lkGuild").value) $("#lkGuild").value = $("#guild").value;
+  const { view, params } = route();
+  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.view === view));
+  for (const v of VIEWS) $("#view-" + v).hidden = v !== view;
+  if (view === "members") loadHistory();
+  if (view === "guild" && params.get("g")) {
+    // 의심 결과의 링크로 들어옴 → 채우고 바로 검색
+    if (params.get("w")) $("#gWorld").value = params.get("w");
+    $("#gName").value = params.get("g");
+    $("#gFocus").value = params.get("f") || "";
+    history.replaceState(null, "", "#guild");
+    startGuildSearch();
   }
-  if (v === "history") loadHistory();
+  if (!showView.keepScroll) window.scrollTo(0, 0);
+  showView.keepScroll = false;
 }
 window.addEventListener("hashchange", showView);
 
-// ── 입력값 기억 ──
-// API 키는 기억하지 않는다 (검사할 때마다 입력, 서버도 저장하지 않음). 예전 버전이 남긴 키는 지운다.
-const fields = { world: "gc_world", guild: "gc_guild", reverse: "gc_reverse" };
-try { localStorage.removeItem("gc_key"); } catch (e) {}
-for (const [id, k] of Object.entries(fields)) {
-  const v = store.get(k);
-  if (v !== null) $("#" + id).value = v;
+// ── 설정 ──
+let cfg = {};
+function paintSettings() {
+  $("#sWorld").value = cfg.world || "";
+  $("#sGuild").value = cfg.guild || "";
+  $("#sModel").value = cfg.claude_model;
+  const keyNow = (k, env) => (k ? `지금 키: <code>${esc(k)}</code>${env ? " <span class='muted'>(.env에서 읽음)</span>" : ""}
+      <button type="button" class="ghost small" data-clear="${env ? "" : "1"}">지우기</button>` : `<span class="muted">아직 없어요</span>`);
+  $("#nexonNow").innerHTML = keyNow(cfg.nexon_key, cfg.nexon_from_env);
+  $("#claudeNow").innerHTML = keyNow(cfg.claude_key, cfg.claude_from_env);
+  $("#nexonNow").querySelector("[data-clear]")?.addEventListener("click", () => clearKey("nexon_key", cfg.nexon_from_env));
+  $("#claudeNow").querySelector("[data-clear]")?.addEventListener("click", () => clearKey("claude_key", cfg.claude_from_env));
+  const ours = cfg.guild ? `${esc(cfg.guild)} <small>${esc(cfg.world)}</small>` : `<span class="muted">설정에서 정해 주세요</span>`;
+  $("#ourGuild").innerHTML = ours;
+  $("#ourGuild2").innerHTML = ours;
+  $("#needSetup").hidden = !!(cfg.nexon_key && cfg.guild && cfg.world);
+  if (!$("#gWorld").dataset.touched && cfg.world) $("#gWorld").value = cfg.world;
 }
-$("#activity").checked = store.get("gc_activity") === "1";
-$("#keyShow").onclick = () => {
-  const i = $("#apiKey");
-  i.type = i.type === "password" ? "text" : "password";
-  $("#keyShow").textContent = i.type === "password" ? "보기" : "숨기기";
+async function loadSettings() {
+  cfg = await api("/api/settings").catch(() => ({}));
+  paintSettings();
+}
+async function clearKey(k, fromEnv) {
+  if (fromEnv) return toast(".env 파일에 있는 키예요. .env에서 지워 주세요.", true);
+  if (!confirm("이 키를 지울까요?")) return;
+  cfg = await api("/api/settings", { method: "POST", body: JSON.stringify({ ["clear_" + k]: true }) });
+  paintSettings();
+  toast("지웠어요");
+}
+$("#settingsForm").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    cfg = await api("/api/settings", {
+      method: "POST",
+      body: JSON.stringify({ world: $("#sWorld").value, guild: $("#sGuild").value, claude_model: $("#sModel").value,
+        nexon_key: $("#sNexon").value, claude_key: $("#sClaude").value }),
+    });
+    $("#sNexon").value = ""; $("#sClaude").value = "";
+    paintSettings();
+    toast("저장했어요");
+  } catch (err) { toast(err.message, true); }
 };
+$("#testBtn").onclick = async () => {
+  try {
+    const r = await api("/api/settings/test", { method: "POST" });
+    toast(`찾았어요: 「${r.guild}」 길드원 ${r.members}명 · 마스터 ${r.master}`);
+  } catch (err) { toast(err.message, true); }
+};
+$("#gWorld").onchange = () => ($("#gWorld").dataset.touched = "1");
 
-// ── 검사 시작 ──
+// ── 검색 작업 (길드원 검색·길드 검색 공통, 한 번에 하나) ──
+$("#activity").checked = store.get("gc_activity") !== "0";
+if (store.get("gc_reverse") !== null) $("#reverse").value = store.get("gc_reverse");
+else $("#reverse").value = "200";  // 기본: 꽤 깊게 (길드원 검색은 API를 많이 안 먹는다)
+
 $("#scanForm").onsubmit = async (e) => {
   e.preventDefault();
-  for (const [id, k] of Object.entries(fields)) store.set(k, $("#" + id).value.trim());
+  store.set("gc_reverse", $("#reverse").value);
   store.set("gc_activity", $("#activity").checked ? "1" : "0");
-  $("#scanBtn").disabled = true;
-  try {
-    const job = await api("/api/scan", {
-      method: "POST",
-      body: JSON.stringify({
-        api_key: $("#apiKey").value.trim(),
-        world: $("#world").value,
-        guild: $("#guild").value.trim(),
-        reverse_top: Number($("#reverse").value),
-        activity: $("#activity").checked,
-      }),
-    });
-    poll(job);
-  } catch (err) {
-    toast(err.message, true);
-    $("#scanBtn").disabled = false;
-  }
+  startJob({ mode: "ours", reverse_top: Number($("#reverse").value), activity: $("#activity").checked });
 };
+$("#guildForm").onsubmit = (e) => { e.preventDefault(); startGuildSearch(); };
+function startGuildSearch() {
+  const focus = $("#gFocus").value.split(",").map((x) => x.trim()).filter(Boolean);
+  startJob({ mode: "other", world: $("#gWorld").value, guild: $("#gName").value.trim(), focus });
+}
+
+async function startJob(body) {
+  setBusy(true);
+  try { poll(await api("/api/scan", { method: "POST", body: JSON.stringify(body) })); }
+  catch (err) { toast(err.message, true); setBusy(false); }
+}
+function setBusy(b) { $("#scanBtn").disabled = b; $("#gBtn").disabled = b; }
 
 let pollTimer = null;
 function poll(job) {
@@ -100,12 +169,12 @@ function poll(job) {
   if (job.status !== "running") return finish(job);
   pollTimer = setTimeout(async () => {
     try { poll(await api(`/api/jobs/${job.id}`)); }
-    catch (err) { toast("진행 상황을 못 받았어요: " + err.message, true); $("#scanBtn").disabled = false; }
+    catch (err) { toast("진행 상황을 못 받았어요: " + err.message, true); setBusy(false); }
   }, 1000);
 }
 
 function renderProgress(j) {
-  const p = $("#progress");
+  const p = j.mode === "other" ? $("#gProgress") : $("#progress");
   p.hidden = false;
   const pct = j.total ? Math.round((j.done / j.total) * 100) : 0;
   const steps = Array.from({ length: j.steps }, (_, i) => `<span class="${i < j.step ? "done" : ""}"></span>`).join("");
@@ -115,40 +184,43 @@ function renderProgress(j) {
     <div class="bar ${j.total ? "" : "wait"}"><i style="width:${pct}%"></i></div>
     <div class="row-end"><div class="steps" title="단계 ${j.step}/${j.steps}">${steps}</div>
       <span class="muted">단계 ${j.step} / ${j.steps}</span>
-      <button type="button" class="danger" id="cancelBtn">멈추기</button></div>`;
-  $("#cancelBtn").onclick = async () => {
-    $("#cancelBtn").disabled = true;
+      <button type="button" class="danger" data-cancel>멈추기</button></div>`;
+  p.querySelector("[data-cancel]").onclick = async (e) => {
+    e.target.disabled = true;
     await api(`/api/jobs/${j.id}/cancel`, { method: "POST" }).catch(() => {});
   };
 }
 
 async function finish(job) {
-  $("#scanBtn").disabled = false;
+  setBusy(false);
   $("#progress").hidden = true;
+  $("#gProgress").hidden = true;
   if (job.status === "done") {
-    toast("검사 끝!");
+    toast("검색 끝!");
     await openScan(job.scan_id);
+    if (job.mode !== "other") loadHistory();
   } else {
-    toast(job.error || "검사가 멈췄어요.", job.status === "error");
+    toast(job.error || "검색이 멈췄어요.", job.status === "error");
   }
 }
 
-// ── 결과 ──
-let current = null;
-let filter = "all";
-let query = "";
+// ── 검색 결과 (길드원 검색 → #result, 길드 검색 → #guildResult) ──
+const panes = {
+  ours: { box: "#result", data: null, filter: "all", query: "" },
+  other: { box: "#guildResult", data: null, filter: "all", query: "" },
+};
 
-async function openScan(id) {
-  try {
-    current = await api(`/api/scans/${id}`);
-  } catch (err) {
-    return toast(err.message, true);
-  }
-  store.set("gc_last_scan", id);
-  filter = "all"; query = "";
-  if (location.hash === "#history") location.hash = "#check";
-  renderResult();
-  $("#result").scrollIntoView({ behavior: "smooth", block: "start" });
+async function openScan(id, { scroll = true } = {}) {
+  let data;
+  try { data = await api(`/api/scans/${id}`); } catch (err) { return toast(err.message, true); }
+  const mode = (data.options || {}).mode === "other" ? "other" : "ours";
+  const pane = panes[mode];
+  Object.assign(pane, { data, filter: "all", query: "" });
+  if (mode === "ours") store.set("gc_last_scan", id);
+  const want = mode === "other" ? "#guild" : "#members";
+  if (location.hash.split("?")[0] !== want) { showView.keepScroll = true; location.hash = want; }
+  renderPane(mode);
+  if (scroll) $(pane.box).scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function avatar(c, cls = "") {
@@ -162,88 +234,128 @@ function charChip(c, red = false) {
   return `<div class="ch ${red ? "red" : ""}">${avatar(c, "sm")}<div class="t"><b>${esc(c.name)}</b><span>${sub}</span></div></div>`;
 }
 
-function accCard(a) {
+function accCard(a, ctx) {
   const r = a.rep;
   const flags = [];
   if (a.forward) flags.push(`본캐(대표)가 「${esc(r.guild)}」 길드`);
   if (a.reverse) flags.push(`부캐 ${a.others.length}명이 다른 길드`);
   const badges = [];
-  if (a.rep_in_ours) badges.push(`<span class="badge ok">본캐 우리 길드</span>`);
+  if (a.rep_in_ours) badges.push(`<span class="badge ok">본캐 ${ctx.other ? "이 길드" : "우리 길드"}</span>`);
   else if (a.forward) badges.push(`<span class="badge dual">본캐 · ${esc(r.guild)}</span>`);
   else if (a.rep_guildless) badges.push(`<span class="badge gold">본캐 길드 없음</span>`);
   else badges.push(`<span class="badge gold">본캐 정보 없음</span>`);
   if (a.union_level) badges.push(`<span class="badge acc-c">유니온 ${Number(a.union_level).toLocaleString()}</span>`);
   if (a.stale30) badges.push(`<span class="badge sky">30일 성장 없음</span>`);
   if (r.away7) badges.push(`<span class="badge sky">7일 미접속</span>`);
+  if (r.guild !== null && !r.fresh) badges.push(`<span class="badge gray" title="최신 정보를 못 받아 어제 기준으로 봤어요">어제 기준</span>`);
+  const focus = ctx.focus.has(r.name);
+  if (focus) badges.unshift(`<span class="badge focus">찾는 계정</span>`);
 
   const ours = a.ours.filter((c) => !(a.rep_in_ours && c.name === r.name));
   let alts = "";
   if (ours.length) {
-    alts += `<div class="ttl">${a.rep_in_ours ? "우리 길드 부캐" : "우리 길드에 있는 캐릭터"} ${ours.length}</div>
+    alts += `<div class="ttl">${a.rep_in_ours ? (ctx.other ? "이 길드 부캐" : "우리 길드 부캐") : (ctx.other ? "이 길드에 있는 캐릭터" : "우리 길드에 있는 캐릭터")} ${ours.length}</div>
       <div class="chars">${ours.map((c) => charChip(c)).join("")}</div>`;
   }
   if (a.others.length) {
-    alts += `<div class="ttl red" style="margin-top:${ours.length ? 10 : 2}px">다른 길드에 있는 부캐 ${a.others.length}</div>
-      <div class="chars">${a.others.map((c) => charChip(c, true)).join("")}</div>`;
+    const gs = [...new Set(a.others.map((c) => c.guild))];
+    alts += `<div class="ttl red" style="margin-top:${ours.length ? 10 : 2}px">다른 길드에 있는 부캐 ${a.others.length} <span class="muted">(그 길드 목록에서 확인 · 포착)</span></div>
+      <div class="chars">${a.others.map((c) => charChip(c, true)).join("")}</div>
+      ${gs.map((g) => suspectLinks("", g, ctx.world, r.name)).join("")}`;
   }
-  return `<article class="acc ${a.dual ? "is-dual" : ""}">
-    ${a.dual ? `<div class="flag">⚠ 이중길드 <span>— ${flags.join(" · ")}</span></div>` : ""}
+  let check = "";
+  if (a.forward) {
+    check = (a.check ? checkLine(a.check, r.name) : "") + suspectLinks(r.name, r.guild, ctx.world, r.name);
+  } else if (r.guild === null || (!r.fresh && a.dual)) {
+    check = `<div class="check gray"><b>최신 정보 없음</b> <span>메애기에서 직접 확인해 주세요</span></div>${suspectLinks(r.name, "", ctx.world)}`;
+  }
+  return `<article class="acc ${a.dual ? "is-dual" : ""} ${focus ? "is-focus" : ""}">
+    ${a.dual ? `<div class="flag">의심 <span>— ${flags.join(" · ")}</span></div>` : ""}
     <div class="main">${avatar(r)}
       <div class="who"><div class="sub">대표 캐릭터</div><div class="name">${esc(r.name)}</div>
         <div class="sub">${esc(lvjob(r))}</div><div class="badges">${badges.join("")}</div></div></div>
+    ${check ? `<div class="checks">${check}</div>` : ""}
     ${alts ? `<div class="alts">${alts}</div>` : ""}
   </article>`;
 }
 
-function matches(a) {
-  if (filter === "dual" && !a.dual) return false;
-  if (filter === "multi" && a.ours.length + a.others.length < 2) return false;
-  if (filter === "stale" && !a.stale30 && !a.rep.away7) return false;
-  if (!query) return true;
-  const q = query.toLowerCase();
+function matches(a, pane) {
+  const f = pane.filter;
+  if (f === "dual" && !a.dual) return false;
+  if (f === "multi" && a.ours.length + a.others.length < 2) return false;
+  if (f === "stale" && !a.stale30 && !a.rep.away7) return false;
+  if (f === "focus" && !(pane.focus || new Set()).has(a.rep.name)) return false;
+  if (!pane.query) return true;
+  const q = pane.query.toLowerCase();
   return [a.rep, ...a.ours, ...a.others].some((c) => (c.name || "").toLowerCase().includes(q) || (c.guild || "").toLowerCase().includes(q));
 }
 
-function renderResult() {
-  const box = $("#result");
-  if (!current) return renderWelcome();
-  const res = current.result, s = res.summary, g = res.guild, d = current.diff, o = current.options || {};
+function renderPane(mode) {
+  const pane = panes[mode];
+  const box = $(pane.box);
+  const cur = pane.data;
+  if (!cur) { box.innerHTML = mode === "ours" ? welcome() : ""; return; }
+  const res = cur.result, s = res.summary, g = res.guild, d = cur.diff, o = cur.options || {};
+  const other = mode === "other";
+  const focus = new Set(o.focus || []);
+  pane.focus = focus;
+  const ctx = { world: g.world, focus, other };
   const revTxt = { 0: "끔", "-1": "전체 길드" }[o.reverse_top] ?? `상위 ${o.reverse_top}개 길드`;
 
   let diffHtml = "";
-  if (d) {
+  if (d && !other) {
     const list = (arr) => (arr.length ? arr.map(esc).join(", ") : "<span class='muted'>없음</span>");
-    diffHtml = `<div class="card"><h3 style="margin-bottom:10px">지난 검사(${esc(d.prev_date)} 기준)와 비교</h3>
+    diffHtml = `<div class="card"><h3 style="margin-bottom:10px">지난 검색(${esc(d.prev_date)} 기준)과 비교</h3>
       <div class="diff">
-        <div class="new"><b>새로 생긴 이중길드</b>${list(d.new_dual)}</div>
-        <div class="gone"><b>이중길드 아님으로 바뀜</b>${list(d.gone_dual)}</div>
+        <div class="new"><b>새로 생긴 의심</b>${list(d.new_dual)}</div>
+        <div class="gone"><b>의심 풀림</b>${list(d.gone_dual)}</div>
         <div><b>새로 들어온 캐릭터</b>${list(d.joined)}</div>
         <div><b>나간 캐릭터</b>${list(d.left)}</div>
       </div></div>`;
   }
 
-  const dual = res.accounts.filter((a) => a.dual && matches(a));
-  const normal = res.accounts.filter((a) => !a.dual && matches(a));
-  const unk = res.unknown.filter((u) => !query || u.name.toLowerCase().includes(query.toLowerCase()));
-  const showUnk = filter === "all" || filter === "unknown";
+  // 길드 검색: 찾는 계정이 이 길드에 몇 명 있는지 맨 위에
+  let focusHtml = "";
+  if (other && focus.size) {
+    focusHtml = [...focus].map((f) => {
+      const a = res.accounts.find((x) => x.rep.name === f);
+      if (!a) return `<div class="verdict warn">「${esc(f)}」 계정의 캐릭터는 이 길드에 없어요
+        <span>길드원 목록에 없으면 그 캐릭터 정보가 옛날 것일 수 있어요 — 신청자에게 접속해서 갱신해 달라고 해 주세요.</span>
+        ${suspectLinks(f, g.name, g.world)}</div>`;
+      const names = [...a.ours.map((c) => c.name)];
+      return `<div class="verdict bad">「${esc(f)}」 계정의 캐릭터가 이 길드에 ${names.length}명 있어요 · 포착
+        <span>${names.map(esc).join(", ")}</span></div>`;
+    }).join("");
+  }
 
-  const chips = [["all", "전체"], ["dual", "이중길드만"], ["multi", "부캐 있는 계정"]];
+  const dual = res.accounts.filter((a) => a.dual && matches(a, pane));
+  const normal = res.accounts.filter((a) => !a.dual && matches(a, pane));
+  const unk = res.unknown.filter((u) => !pane.query || u.name.toLowerCase().includes(pane.query.toLowerCase()));
+  const showUnk = pane.filter === "all" || pane.filter === "unknown";
+
+  const chips = [["all", "전체"], ["dual", "의심만"], ["multi", "부캐 있는 계정"]];
+  if (other && focus.size) chips.splice(1, 0, ["focus", "찾는 계정"]);
   if (s.activity_on) chips.push(["stale", "성장 없음·미접속"]);
   chips.push(["unknown", "판별 불가"]);
+  const deep = (s.deep_guilds || []);
 
   box.innerHTML = `
+    ${focusHtml}
     <div class="res-head">
       <div><h2>${esc(g.name)}<small>${esc(g.world)}${g.level ? ` · Lv.${g.level}` : ""}</small></h2>
-        <div class="meta">${esc(g.date)} 데이터 기준 · 길드 마스터 ${esc(g.master || "?")} · 검사 ${esc(current.created_at.replace("T", " "))}</div></div>
-      <div class="meta">역방향: ${revTxt}${s.reverse_on ? ` (다른 길드 ${s.other_guilds}개, ${s.other_members.toLocaleString()}명 확인)` : ""}<br>
-        넥슨 API ${s.api_calls.toLocaleString()}번 호출 · 캐시 ${s.cache_hits.toLocaleString()}번 사용 · ${s.seconds}초</div>
+        <div class="meta">${g.fresh ? "최신 정보로 갱신해서 봤어요" : `${esc(g.date)} 데이터 기준`} · 유니온 대표는 ${esc(g.date)} 랭킹 기준 · 길드 마스터 ${esc(g.master || "?")} · ${esc(cur.created_at.replace("T", " "))}</div></div>
+      <div class="meta">${other ? "" : `역방향: ${revTxt}${s.other_guilds ? ` · 다른 길드 ${s.other_guilds}개(${(s.other_members || 0).toLocaleString()}명) 확인` : ""}<br>`}
+        ${deep.length ? `심층 확인한 의심 길드: ${deep.map(esc).join(", ")}<br>` : ""}
+        넥슨 API ${s.api_calls.toLocaleString()}번 · 캐시 ${s.cache_hits.toLocaleString()}번 · ${s.seconds}초</div>
     </div>
     <div class="tiles">
-      <div class="card tile dual"><div class="label">이중길드 계정</div><div class="value">${s.dual}</div>
-        <div class="sub">본캐 다른 길드 ${s.forward}${s.reverse_on ? ` · 부캐 다른 길드 ${s.reverse}` : " · 역방향 꺼짐"}</div></div>
-      <div class="card tile real"><div class="label">실질 길드원 (계정)</div><div class="value">${s.accounts}</div>
+      <div class="card tile dual"><div class="label">의심 계정</div><div class="value">${s.dual}</div>
+        <div class="sub">본캐 다른 길드 ${s.forward} · 부캐 다른 길드 ${s.reverse}</div></div>
+      <div class="card tile caught"><div class="label">포착 / 갱신 필요</div><div class="value">${s.confirmed ?? 0}<small> / ${s.stale ?? 0}</small></div>
+        <div class="sub">다른 길드 목록과 대조</div></div>
+      <div class="card tile real"><div class="label">실질 ${other ? "인원" : "길드원"} (계정)</div><div class="value">${s.accounts}</div>
         <div class="sub">부캐 있는 계정 ${s.multi}</div></div>
-      <div class="card tile chars"><div class="label">길드 캐릭터 수</div><div class="value">${s.characters}</div>
+      <div class="card tile chars"><div class="label">캐릭터 수</div><div class="value">${s.characters}</div>
         <div class="sub">길드 목록 기준</div></div>
       <div class="card tile unk"><div class="label">판별 불가</div><div class="value">${s.unknown}</div>
         <div class="sub">유니온 랭킹에 없음 등</div></div>
@@ -251,56 +363,59 @@ function renderResult() {
     </div>
     ${diffHtml}
     <div class="toolbar">
-      <div class="chips">${chips.map(([k, t]) => `<button type="button" data-f="${k}" class="${filter === k ? "on" : ""}">${t}</button>`).join("")}</div>
-      <input id="search" placeholder="캐릭터·길드 이름 찾기" value="${esc(query)}">
+      <div class="chips">${chips.map(([k, t]) => `<button type="button" data-f="${k}" class="${pane.filter === k ? "on" : ""}">${t}</button>`).join("")}</div>
+      <input data-search placeholder="캐릭터·길드 이름 찾기" value="${esc(pane.query)}">
     </div>
-    ${filter !== "unknown" ? `
-      <div class="sec-title dual"><h3>이중길드</h3><span class="count">${dual.length}</span></div>
-      ${dual.length ? `<div class="acc-grid">${dual.map(accCard).join("")}</div>` : `<div class="empty">${s.dual ? "조건에 맞는 계정이 없어요" : "이중길드가 없어요 🎉"}</div>`}
-      ${filter !== "dual" ? `
-        <div class="sec-title"><h3>실질 길드원</h3><span class="count">${normal.length}</span><span class="muted">대표 캐릭터 기준으로 묶은 계정</span></div>
-        ${normal.length ? `<div class="acc-grid">${normal.map(accCard).join("")}</div>` : `<div class="empty">조건에 맞는 계정이 없어요</div>`}` : ""}` : ""}
+    ${pane.filter !== "unknown" ? `
+      <div class="sec-title dual"><h3>의심</h3><span class="count">${dual.length}</span></div>
+      ${dual.length ? `<div class="acc-grid">${dual.map((a) => accCard(a, ctx)).join("")}</div>` : `<div class="empty">${s.dual ? "조건에 맞는 계정이 없어요" : "의심되는 계정이 없어요"}</div>`}
+      ${pane.filter !== "dual" ? `
+        <div class="sec-title"><h3>실질 ${other ? "인원" : "길드원"}</h3><span class="count">${normal.length}</span><span class="muted">대표 캐릭터 기준으로 묶은 계정</span></div>
+        ${normal.length ? `<div class="acc-grid">${normal.map((a) => accCard(a, ctx)).join("")}</div>` : `<div class="empty">조건에 맞는 계정이 없어요</div>`}` : ""}` : ""}
     ${showUnk ? `
       <div class="sec-title"><h3>판별 불가</h3><span class="count">${unk.length}</span><span class="muted">어느 계정인지 알 수 없어서 따로 모았어요</span></div>
       ${unk.length ? `<div class="unk-grid">${unk.map((u) => `<div class="ch">${avatar(u, "sm")}<div class="t"><b>${esc(u.name)}</b>
-        <span>${esc(u.reason)}${u.level ? ` · Lv.${u.level}` : ""}</span></div></div>`).join("")}</div>` : `<div class="empty">없어요</div>`}` : ""}`;
+        <span>${esc(u.reason)}${u.level ? ` · Lv.${u.level}` : ""}</span></div>
+        <a class="lnk tiny" href="${meaegiChar(u.name)}" target="_blank" rel="noopener">메애기</a></div>`).join("")}</div>` : `<div class="empty">없어요</div>`}` : ""}`;
 
-  box.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => { filter = b.dataset.f; renderResult(); }));
-  const si = $("#search");
+  box.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => { pane.filter = b.dataset.f; renderPane(mode); }));
+  const si = box.querySelector("[data-search]");
   si.oninput = () => {
-    query = si.value.trim();
+    pane.query = si.value.trim();
     const pos = si.selectionStart;
-    renderResult();
-    const n = $("#search"); n.focus(); n.setSelectionRange(pos, pos);
+    renderPane(mode);
+    const n = $(pane.box).querySelector("[data-search]"); n.focus(); n.setSelectionRange(pos, pos);
   };
 }
 
-function renderWelcome() {
-  $("#result").innerHTML = `<div class="welcome">
-    <div class="card"><div class="num">1</div><h3>API 키 넣기</h3><p>넥슨 오픈API 사이트에서 받은 키를 넣어요. 어디에도 저장되지 않아요(매번 입력).</p></div>
-    <div class="card"><div class="num">2</div><h3>월드·길드 고르기</h3><p>우리 길드원마다 유니온 대표 캐릭터를 찾아 계정별로 묶어요.</p></div>
-    <div class="card"><div class="num">3</div><h3>검사 누르기</h3><p>대표 캐릭터가 다른 길드에 있으면 이중길드로 표시돼요. 결과는 '지난 기록'에 남아요.</p></div>
+function welcome() {
+  return `<div class="welcome">
+    <div class="card"><div class="num">1</div><h3>설정</h3><p>'설정' 탭에서 넥슨 API 키와 우리 길드를 한 번만 정해 두면 계속 유지돼요.</p></div>
+    <div class="card"><div class="num">2</div><h3>검색</h3><p>길드원 정보를 최신으로 갱신하고, 계정마다 본캐를 찾아 다른 길드에 있는지 봐요.</p></div>
+    <div class="card"><div class="num">3</div><h3>의심 확인</h3><p>다른 길드 목록과 대조해서 포착 / 정보 갱신 필요를 가려요. 길드 검색·메애기로 바로 이어져요.</p></div>
   </div>`;
 }
 
-// ── 지난 기록 ──
+// ── 지난 기록 (길드원 검색 탭 아래) ──
 async function loadHistory() {
   const box = $("#historyList");
   let list;
-  try { list = await api("/api/scans"); } catch (err) { return toast(err.message, true); }
-  if (!list.length) { box.innerHTML = `<div class="empty">아직 검사한 기록이 없어요</div>`; return; }
+  try { list = await api("/api/scans"); } catch (err) { return; }
+  if (!list.length) { box.innerHTML = `<div class="empty">아직 검색한 기록이 없어요</div>`; return; }
   box.innerHTML = list.map((h) => {
     const s = h.summary || {}, o = h.options || {};
+    const other = o.mode === "other";
     return `<div class="card hist" data-id="${h.id}">
-      <div class="top-line"><span class="g">${esc(h.guild)}</span><span class="muted">${esc(h.world)}</span></div>
-      <div class="muted">${esc(h.data_date)} 데이터 · ${esc(h.created_at.replace("T", " "))}</div>
+      <div class="top-line"><span class="g">${esc(h.guild)}</span><span class="muted">${esc(h.world)}</span>
+        ${other ? `<span class="badge gray">길드 검색</span>` : ""}</div>
+      <div class="muted">${esc(h.created_at.replace("T", " "))}</div>
       <div class="nums">
-        <span class="badge dual">이중길드 ${s.dual ?? "?"}</span>
+        <span class="badge dual">의심 ${s.dual ?? "?"}</span>
         <span class="badge ok">계정 ${s.accounts ?? "?"}</span>
         <span class="badge">캐릭터 ${s.characters ?? "?"}</span>
         <span class="badge gold">판별 불가 ${s.unknown ?? "?"}</span>
       </div>
-      <div class="foot"><span class="muted">역방향 ${o.reverse_top ? (o.reverse_top < 0 ? "전체" : "상위 " + o.reverse_top) : "끔"}</span>
+      <div class="foot"><span class="muted">${other ? (o.focus?.length ? `찾는 계정 ${o.focus.map(esc).join(", ")}` : "") : `역방향 ${o.reverse_top ? (o.reverse_top < 0 ? "전체" : "상위 " + o.reverse_top) : "끔"}`}</span>
         <button type="button" class="danger" data-del="${h.id}">삭제</button></div>
     </div>`;
   }).join("");
@@ -309,36 +424,22 @@ async function loadHistory() {
     openScan(el.dataset.id);
   }));
   box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
-    if (!confirm("이 검사 기록을 지울까요?")) return;
+    if (!confirm("이 검색 기록을 지울까요?")) return;
     await api(`/api/scans/${b.dataset.del}`, { method: "DELETE" });
-    if (current && String(current.id) === b.dataset.del) { current = null; store.set("gc_last_scan", ""); renderResult(); }
+    for (const m of ["ours", "other"]) {
+      if (panes[m].data && String(panes[m].data.id) === b.dataset.del) { panes[m].data = null; renderPane(m); }
+    }
     loadHistory();
   }));
 }
 
-// ── 시작 ──
-(async function init() {
-  showView();
-  const running = await api("/api/jobs/current").catch(() => null);
-  if (running) { $("#scanBtn").disabled = true; poll(running); }
-  const last = store.get("gc_last_scan");
-  if (last) {
-    try { current = await api(`/api/scans/${last}`); } catch (e) { current = null; }
-  }
-  renderResult();
-})();
-
-// ── 가입 확인 (이름 조회 + 스크린샷 읽기) ──
+// ── 캐릭터명 검색 (스크린샷 → 닉네임 → 검수 → 조회) ──
 async function runLookup() {
   const btn = $("#lkBtn");
   btn.disabled = true;
   btn.textContent = "조회 중…";
   try {
-    const r = await api("/api/lookup", {
-      method: "POST",
-      body: JSON.stringify({ api_key: $("#lkKey").value.trim(), our_guild: $("#lkGuild").value.trim(), names: $("#lkNames").value }),
-    });
-    renderLookup(r);
+    renderLookup(await api("/api/lookup", { method: "POST", body: JSON.stringify({ names: $("#lkNames").value }) }));
   } catch (err) {
     toast(err.message, true);
   } finally {
@@ -369,7 +470,6 @@ function shrink(file) {
   });
 }
 
-// 스크린샷: ① 올리기(모아 두기) → ② 읽기 버튼 → ③ 텍스트 상자에서 검수 → ④ 조회
 let shots = [];        // [{file, url}]
 let reading = false;
 let readInfo = null;
@@ -420,11 +520,10 @@ $("#readBtn").onclick = async () => {
   reading = true;
   paintShots();
   $("#readBtn").textContent = "읽는 중…";
-  $("#readMsg").textContent = `${shots.length}장 읽는 중 (10~30초 정도)`;
+  $("#readMsg").textContent = `${shots.length}장 읽는 중 (10~40초 정도)`;
   try {
     const fd = new FormData();
     for (const s of shots) { const b = await shrink(s.file); fd.append("images", b, b.type === "image/png" ? "shot.png" : "shot.jpg"); }
-    if ($("#lkClaude")) fd.append("claude_key", $("#lkClaude").value.trim());
     const r = await fetch("/api/read-image", { method: "POST", body: fd });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || `오류 ${r.status}`);
@@ -440,7 +539,7 @@ $("#readBtn").onclick = async () => {
     $("#unsure").hidden = !tips.length;
     $("#unsure").innerHTML = tips.map(esc).join("<br>");
     const u = data.usage;
-    $("#readMsg").textContent = `${names.length}명 읽음 · ${data.note || ""}${u ? ` · 토큰 입력 ${u.input.toLocaleString()} / 출력 ${u.output.toLocaleString()}` : ""}`;
+    $("#readMsg").textContent = `${names.length}명 읽음 · ${data.note || ""}${u ? ` · ${u.model} 토큰 입력 ${u.input.toLocaleString()} / 출력 ${u.output.toLocaleString()}` : ""}`;
     $("#lkNames").focus();
   } catch (err) {
     $("#readMsg").textContent = "";
@@ -471,7 +570,7 @@ drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
 drop.ondragleave = () => drop.classList.remove("over");
 drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); addShots(e.dataTransfer.files); };
 document.addEventListener("paste", (e) => {
-  if ($("#view-lookup").hidden) return;
+  if ($("#view-chars").hidden) return;
   const files = [...(e.clipboardData?.items || [])].filter((i) => i.kind === "file").map((i) => i.getAsFile()).filter(Boolean);
   if (files.length) { e.preventDefault(); addShots(files); }
 });
@@ -482,6 +581,7 @@ function lookupCard(r, ours) {
         ${esc(x.name)} <small>${x.same_account ? "같은 계정 ✓" : `다른 계정${x.guild ? ` · ${esc(x.guild)}` : ""}`}${x.level ? ` · Lv.${x.level}` : ""}</small></button>`).join("");
     return `<article class="acc missing"><div class="main">${avatar(null)}<div class="who"><div class="name">${esc(r.name)}</div>
       <div class="sub">${esc(r.reason)}</div></div></div>
+      <div class="checks">${suspectLinks(r.name, "", "")}</div>
       ${sg ? `<div class="alts"><div class="ttl">혹시 이 캐릭터? (누르면 이름을 바꿔요)</div><div class="fixes">${sg}</div></div>` : ""}</article>`;
   }
   const c = r.char, p = r.rep;
@@ -494,15 +594,21 @@ function lookupCard(r, ours) {
   else if (r.rep_other_guild) badges.push(`<span class="badge dual">대표는 ${g(p.guild)}</span>`);
   if (r.union_level) badges.push(`<span class="badge acc-c">유니온 ${Number(r.union_level).toLocaleString()}</span>`);
   if (c.access === "false") badges.push(`<span class="badge sky">7일 미접속</span>`);
+  badges.push(r.fresh ? `<span class="badge ok">최신 갱신</span>` : `<span class="badge gray" title="최신 정보를 못 받아 어제 기준으로 봤어요">어제 기준</span>`);
   const why = [];
   if (r.other_guild) why.push(`이 캐릭터가 ${g(c.guild)}`);
   if (r.rep_other_guild) why.push(`대표(본캐)가 ${g(p.guild)}`);
   if (r.dual && !why.length) why.push(`이 캐릭터는 ${g(c.guild)}, 대표(본캐)는 ${g(p.guild)}`);
+  // 대조 결과 + 길드 검색·메애기 링크
+  const focus = p ? p.name : c.name;
+  let checks = (r.checks || []).map((k) => checkLine(k, k.who) + suspectLinks(k.who, k.guild, r.world, focus)).join("");
+  if (!r.fresh && !checks) checks = `<div class="check gray"><b>최신 정보 없음</b> <span>메애기에서 직접 확인해 주세요</span></div>${suspectLinks(c.name, "", r.world)}`;
   return `<article class="acc ${r.dual ? "is-dual" : ""}">
-    ${r.dual ? `<div class="flag">⚠ 다른 길드 <span>— ${why.join(" · ")}</span></div>` : ""}
+    ${r.dual ? `<div class="flag">의심 <span>— ${why.join(" · ")}</span></div>` : ""}
     <div class="main">${avatar(c)}
       <div class="who"><div class="sub">${esc(r.world)} · ${g(c.guild)}</div><div class="name">${esc(c.name)}</div>
         <div class="sub">${esc(lvjob(c))}</div><div class="badges">${badges.join("")}</div></div></div>
+    ${checks ? `<div class="checks">${checks}</div>` : ""}
     ${p && !r.is_rep ? `<div class="alts"><div class="ttl">유니온 대표 캐릭터</div>
       <div class="chars">${charChip(p, r.rep_other_guild || (r.dual && !r.other_guild))}</div></div>` : ""}
   </article>`;
@@ -513,10 +619,12 @@ function renderLookup(res) {
   const bad = res.results.filter((r) => r.dual);
   let v = "";
   if (bad.length) {
-    v = `<div class="verdict bad">⚠ 다른 길드에 있는 캐릭터 ${bad.length}명
+    v = `<div class="verdict bad">다른 길드에 있는 캐릭터 ${bad.length}명 — 포착 ${s.confirmed} · 정보 갱신 필요 ${s.stale}
       <span>${bad.map((r) => `${esc(r.char.name)} → ${esc(r.other_guild ? r.char.guild : r.rep?.guild)}`).join(" · ")}</span></div>`;
+    if (s.stale) v += `<div class="verdict warn">정보 갱신이 필요한 캐릭터가 있어요
+      <span>캐릭터 정보엔 다른 길드로 나오는데 그 길드 목록엔 없어요. 신청자에게 해당 캐릭터로 한 번 접속해서 정보를 갱신해 달라고 한 뒤 다시 조회해 주세요.</span></div>`;
   } else if (!s.not_found && !s.unknown_rep) {
-    v = `<div class="verdict ok">✓ ${ours ? `「${esc(ours)}」 말고 다른 길드에 있는 캐릭터 없음` : "이중길드 없음"}</div>`;
+    v = `<div class="verdict ok">✓ ${ours ? `「${esc(ours)}」 말고 다른 길드에 있는 캐릭터 없음` : "다른 길드 없음"}</div>`;
   }
   const autofix = res.results.filter((r) => !r.found && r.suggest && r.suggest.filter((x) => x.same_account).length === 1)
     .map((r) => [r.name, r.suggest.find((x) => x.same_account).name]);
@@ -527,14 +635,18 @@ function renderLookup(res) {
   }
   if (s.not_found || s.unknown_rep) {
     v += `<div class="verdict warn">확인 못 한 캐릭터가 있어요
-      <span>없는 이름 ${s.not_found}명${s.unknown_rep ? ` · 유니온 랭킹에 없어 대표를 모름 ${s.unknown_rep}명` : ""} — 이름(오타·개명)을 확인해 주세요</span></div>`;
+      <span>없는 이름 ${s.not_found}명${s.unknown_rep ? ` · 유니온 랭킹에 없어 대표를 모름 ${s.unknown_rep}명` : ""} — 이름(오타·개명)을 확인하거나 메애기에서 찾아봐 주세요</span></div>`;
+  }
+  if (s.not_fresh) {
+    v += `<div class="verdict warn">최신 정보를 못 받은 캐릭터 ${s.not_fresh}명
+      <span>어제 기준 정보로 봤어요. 카드의 메애기 링크로 직접 확인해 주세요.</span></div>`;
   }
   const acc = s.accounts > 1
     ? `<div class="verdict warn">넣은 캐릭터가 계정 ${s.accounts}개로 나뉘어요
         <span>핸즈 목록(한 계정)이면 1개여야 해요. 다른 사람 캐릭터가 섞였거나 다른 월드 캐릭터예요.</span></div>` : "";
   const u = readInfo && readInfo.usage;
   $("#lookupResult").innerHTML = `${v}${acc}
-    <div class="sub" style="margin:4px 2px 12px">${esc(res.date)} 데이터 기준 · ${s.total}명 조회 · 계정 ${s.accounts}개${s.worlds.length ? ` · ${s.worlds.map(esc).join(", ")}` : ""}
+    <div class="sub" style="margin:4px 2px 12px">최신 정보로 갱신 · 유니온 대표는 ${esc(res.date)} 랭킹 기준 · ${s.total}명 조회 · 계정 ${s.accounts}개${s.worlds.length ? ` · ${s.worlds.map(esc).join(", ")}` : ""}
       · 넥슨 API ${s.api_calls}번${u ? ` · 이미지 읽기 ${esc(u.model)} 토큰 입력 ${u.input.toLocaleString()} / 출력 ${u.output.toLocaleString()}` : ""}
       ${readInfo && readInfo.note ? `<br>이미지: ${esc(readInfo.note)}` : ""}</div>
     ${readInfo && readInfo.shown_count > readInfo.characters.length ? `<div class="verdict warn">스크린샷에서 ${readInfo.characters.length}개만 읽었어요
@@ -553,3 +665,16 @@ function applyFixes(pairs) {
   toast(`${pairs.length}개 이름을 바꿨어요`);
   runLookup();
 }
+
+// ── 시작 ──
+(async function init() {
+  await loadSettings();
+  showView();
+  const running = await api("/api/jobs/current").catch(() => null);
+  if (running) { setBusy(true); poll(running); }
+  const last = store.get("gc_last_scan");
+  if (last && !panes.ours.data) {
+    try { panes.ours.data = await api(`/api/scans/${last}`); } catch (e) { panes.ours.data = null; }
+  }
+  renderPane("ours");
+})();

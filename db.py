@@ -1,5 +1,5 @@
-# SQLite 저장소 — 넥슨 API 결과 캐시(다시 검사할 때 빠르게)와 지난 검사 결과.
-# API 키는 여기에 저장하지 않는다.
+# SQLite 저장소(data/guild.db) — 설정(API 키·우리 길드), 넥슨 API 결과 캐시, 지난 검사 결과.
+# API 키가 들어 있으니 이 파일은 남에게 주지 말 것.
 import json
 import os
 import sqlite3
@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS guild_cache (     -- 길드 이름 → oguild_id
 CREATE TABLE IF NOT EXISTS guild_members (   -- 그날 기준 길드원 이름 목록
     oguild_id TEXT NOT NULL, date TEXT NOT NULL, data TEXT NOT NULL,
     PRIMARY KEY (oguild_id, date)
+);
+CREATE TABLE IF NOT EXISTS settings (        -- 설정 화면 값 (API 키, 우리 길드·월드, Claude 모델)
+    key TEXT PRIMARY KEY, value TEXT
 );
 CREATE TABLE IF NOT EXISTS scans (           -- 지난 검사 결과
     id INTEGER PRIMARY KEY,
@@ -126,6 +129,19 @@ class Store:
         cut = (now() - timedelta(days=60)).date().isoformat()
         self.q("DELETE FROM char_cache WHERE date < ?", (cut,))
         self.q("DELETE FROM guild_members WHERE date < ?", (cut,))
+
+    # ── 설정 ──
+
+    def get_settings(self):
+        return {r["key"]: r["value"] for r in self.q("SELECT key, value FROM settings")}
+
+    def set_settings(self, values):
+        """값이 None이면 지운다."""
+        for k, v in values.items():
+            if v is None:
+                self.q("DELETE FROM settings WHERE key=?", (k,))
+            else:
+                self.q("INSERT OR REPLACE INTO settings VALUES (?,?)", (k, v))
 
     # ── 검사 결과 ──
 

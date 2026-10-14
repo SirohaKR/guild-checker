@@ -47,6 +47,7 @@ class Job:
         self.done = self.total = 0
         self.error = None
         self.scan_id = None
+        self.mode = "ours"  # ours = 우리 길드원 검색 / other = 길드 검색
         self.cancel_flag = False
         self.lock = threading.Lock()
 
@@ -67,15 +68,22 @@ class Job:
         with self.lock:
             return {"id": self.id, "status": self.status, "world": self.world, "guild": self.guild,
                     "step": self.step, "steps": self.steps, "phase": self.phase,
-                    "done": self.done, "total": self.total, "error": self.error, "scan_id": self.scan_id}
+                    "done": self.done, "total": self.total, "error": self.error, "scan_id": self.scan_id,
+                    "mode": self.mode}
 
 
 class Scanner:
-    def __init__(self, client, store, job, world, guild, reverse_top=0, check_activity=False):
+    """검사 한 번. fresh=True면 캐릭터·길드 정보는 늘 '최신'(날짜 없이)으로 다시 받는다 — 검사 전 정보 갱신.
+    유니온 대표(랭킹)는 하루 단위 데이터라 어제 기준 + 캐시."""
+
+    def __init__(self, client, store, job, world, guild, reverse_top=0, check_activity=False, fresh=True, deep=True):
         self.c, self.db, self.job = client, store, job
         self.world, self.guild_input = world, guild.strip()
         self.reverse_top = reverse_top          # 0 = 역방향 끔, -1 = 전체
         self.check_activity = check_activity
+        self.fresh = fresh                      # 최신 정보로 갱신해서 볼지
+        self.deep = deep                        # 의심 길드의 길드원까지 확인할지
+        self.world_api = world
         self.date = data_date()
         self.date30 = (datetime.fromisoformat(self.date) - timedelta(days=30)).date().isoformat()
         self.cache_hits = 0
@@ -181,7 +189,10 @@ class Scanner:
         return self._once(("repof", name, w), work)
 
     def info(self, name, date=None):
-        """캐릭터 기본 정보(길드·레벨·직업·이미지). 못 찾으면 None."""
+        """캐릭터 기본 정보(길드·레벨·직업·이미지·월드). 못 찾으면 None.
+        date 없이 부르면 fresh일 때 최신 정보(갱신), 아니면 어제 기준. 'fresh' 값으로 최신인지 알려 준다."""
+        if date is None and self.fresh:
+            return self._once(("latest", name), lambda: self._latest(name))
         date = date or self.date
 
         def work():
@@ -194,8 +205,21 @@ class Scanner:
                             return None  # 그날엔 없던 캐릭터 (30일 전 비교용)
                         raise
                 return self._cached(lambda: self.db.get_char(oc, date), lambda v: self.db.put_char(oc, date, v), api)
-            return self._with_ocid(name, fetch)[1]
+            got = self._with_ocid(name, fetch)[1]
+            return {**got, "fresh": False} if got else None
         return self._once(("info", name, date), work)
+
+    def _latest(self, name):
+        """최신 정보 (캐시 안 함 — 늘 새로). 실패하면 어제 기준 정보라도."""
+        try:
+            got = self._with_ocid(name, lambda oc: slim(self.c.character_basic(oc)))[1]
+        except NexonError as e:
+            if e.status != 400:
+                raise
+            got = None
+        if got:
+            return {**got, "fresh": True}
+        return self.info(name, self.date)
 
     # ── 길드 단위 ──
 
@@ -208,25 +232,48 @@ class Scanner:
         return None, None
 
     def members_of(self, oguild_id):
+        """길드 정보 + 길드원 목록. fresh면 최신(한 검사 안에서만 기억), 아니면 어제 기준 + DB 캐시."""
+        def api(date):
+            b = self.c.guild_basic(oguild_id, date)
+            return {"guild_name": b.get("guild_name"), "master": b.get("guild_master_name"),
+                    "level": b.get("guild_level"), "members": b.get("guild_member") or [],
+                    "user_count": b.get("guild_user_count")}
+        if self.fresh:
+            return self._once(("members", oguild_id), lambda: api(None))
         got = self.db.get_members(oguild_id, self.date)
         if got is not None:
             self.cache_hits += 1
             return got
-        b = self.c.guild_basic(oguild_id, self.date)
-        got = {"guild_name": b.get("guild_name"), "master": b.get("guild_master_name"),
-               "level": b.get("guild_level"), "members": b.get("guild_member") or [],
-               "user_count": b.get("guild_user_count")}
+        got = api(self.date)
         self.db.put_members(oguild_id, self.date, got)
         return got
+
+    def guild_list(self, gname, world=None):
+        """길드 이름 → 길드원 이름 목록. 길드를 못 찾거나 오류면 None."""
+        w = world or self.world_api
+        try:
+            _, gid = self.find_guild(gname, WORLD_ALIASES.get(w, [w]))
+            return self.members_of(gid)["members"] if gid else None
+        except NexonError:
+            return None
+
+    def verify(self, name, gname, world=None):
+        """'name이 gname 길드에 있다'는 정보를 그 길드의 길드원 목록과 대조.
+        confirmed = 목록에도 있음(포착) / stale = 목록엔 없음(캐릭터 정보가 옛날 것 → 접속해서 갱신 필요)
+        / unknown = 길드 목록을 못 받음."""
+        ms = self._once(("glist", gname, world or self.world_api), lambda: self.guild_list(gname, world))
+        if ms is None:
+            return "unknown"
+        return "confirmed" if name in ms else "stale"
 
     # ── 전체 흐름 ──
 
     def run(self):
         started = time.time()
         job = self.job
-        job.steps = 3 + (1 if self.check_activity else 0) + (2 if self.reverse_top else 0)
+        job.steps = 4 + (1 if self.check_activity else 0) + (2 if self.reverse_top else 0) + (1 if self.deep else 0)
 
-        # 1) 우리 길드
+        # 1) 길드 정보 (최신 길드원 목록)
         job.start_phase("길드 정보 확인", 1)
         self.world_api, gid = self.find_guild(self.guild_input, WORLD_ALIASES.get(self.world, [self.world]))
         if not gid:
@@ -235,20 +282,29 @@ class Scanner:
         guild = ours["guild_name"] or self.guild_input
         names = list(dict.fromkeys(ours["members"]))  # 중복 제거 (순서 유지)
         if not names:
-            raise ScanError(f"{self.date} 기준 길드원 목록이 비어 있어요.")
+            raise ScanError("길드원 목록이 비어 있어요.")
         job.tick()
 
-        # 2) 길드원마다 대표 캐릭터
+        # 2) 검사 전에 길드원 정보부터 최신으로 갱신
+        job.start_phase("길드원 정보 최신으로 갱신", len(names))
+        infos = dict(zip(names, self._pmap(self.info, names)))
+
+        # 3) 길드원마다 대표 캐릭터
         job.start_phase("길드원 대표 캐릭터 조회", len(names))
         reps = dict(zip(names, self._pmap(self.rep_of, names)))
 
-        # 3) 캐릭터 정보: 우리 길드원 + 길드 밖에 있는 대표 캐릭터 (각각 한 번씩만)
+        # 4) 길드 밖에 있는 대표 캐릭터 정보 (최신) + 다른 길드면 그 길드 목록과 대조
         rep_names = sorted({r["rep"] for r in reps.values() if r["rep"]})
-        need = [n for n in names if reps[n]["ocid"]] + [r for r in rep_names if r not in reps]
-        job.start_phase("캐릭터 정보 조회", len(need))
-        infos = dict(zip(need, self._pmap(self.info, need)))
+        outside = [r for r in rep_names if r not in infos]
+        job.start_phase("대표 캐릭터 정보 갱신·길드 대조", len(outside))
+        infos.update(zip(outside, self._pmap(self.info, outside)))
+        checks = {}  # 대표 이름 → 다른 길드 소속 확인 결과
+        for rep in rep_names:
+            g = (infos.get(rep) or {}).get("guild")
+            if g and g != guild:
+                checks[rep] = {"guild": g, "status": self.verify(rep, g)}
 
-        # 4) (선택) 30일 성장 확인 — 대표 캐릭터만, 30일 전 기본 정보와 레벨·경험치 비교
+        # 5) (선택) 30일 성장 확인 — 대표 캐릭터만, 30일 전 기본 정보와 레벨·경험치 비교
         stale = {}
         if self.check_activity:
             job.start_phase("30일 성장 확인", len(rep_names))
@@ -258,24 +314,33 @@ class Scanner:
                 stale[n] = None if not (cur and o) else (
                     cur.get("level") == o.get("level") and cur.get("exp") == o.get("exp"))
 
-        # 5) (선택) 역방향: 다른 길드원의 대표가 우리 대표와 같은지
+        # 6) 다른 길드에 있는 부캐 찾기
+        #    - 심층: 대표(본캐)가 가 있는 '의심 길드'의 길드원을 전부 확인 (부캐가 더 있는지)
+        #    - 역방향(선택): 길드 랭킹 상위 N개 길드까지
         others = {}  # 대표 이름 → [다른 길드 캐릭터 …]
-        other_stats = {"guilds": 0, "members": 0, "unknown": 0}
+        other_stats = {"guilds": 0, "members": 0, "unknown": 0, "deep_guilds": []}
+        our_reps = set(rep_names)
+        deep_guilds = sorted({c["guild"] for c in checks.values() if c["status"] != "unknown"})
+        targets = list(deep_guilds) if self.deep else []
         if self.reverse_top:
-            others, other_stats = self.reverse(guild, set(rep_names))
+            targets += [g for g in self.ranked_guilds(guild) if g not in targets]
+        if targets:
+            others, other_stats = self.scan_guilds(targets, our_reps)
+            other_stats["deep_guilds"] = deep_guilds if self.deep else []
 
-        result = build_result(guild, names, reps, infos, stale, others, self.check_activity, bool(self.reverse_top))
+        result = build_result(guild, names, reps, infos, stale, others, self.check_activity, bool(self.reverse_top), checks)
         result["guild"] = {"name": guild, "world": self.world, "master": ours["master"], "level": ours["level"],
-                           "user_count": ours["user_count"], "date": self.date}
+                           "user_count": ours["user_count"], "date": self.date, "fresh": self.fresh}
         s = result["summary"]
         s.update({"other_guilds": other_stats["guilds"], "other_members": other_stats["members"],
-                  "other_unknown": other_stats["unknown"], "api_calls": self.c.calls,
-                  "cache_hits": self.cache_hits, "seconds": round(time.time() - started, 1)})
+                  "other_unknown": other_stats["unknown"], "deep_guilds": other_stats["deep_guilds"],
+                  "api_calls": self.c.calls, "cache_hits": self.cache_hits,
+                  "seconds": round(time.time() - started, 1)})
         return result
 
-    def reverse(self, our_guild, our_reps):
+    def ranked_guilds(self, our_guild):
+        """길드 랭킹 상위 reverse_top개(-1이면 전체) 길드 이름."""
         job = self.job
-        # 길드 랭킹에서 다른 길드 이름 모으기
         job.start_phase("다른 길드 목록 모으기", 0)
         guild_names, page = [], 1
         limit = self.reverse_top if self.reverse_top > 0 else None
@@ -291,8 +356,11 @@ class Scanner:
                 break
             page += 1
         guild_names = [g for g in dict.fromkeys(guild_names) if g != our_guild]
-        if limit:
-            guild_names = guild_names[:limit]
+        return guild_names[:limit] if limit else guild_names
+
+    def scan_guilds(self, guild_names, our_reps):
+        """여러 길드의 길드원 대표를 확인해서, 대표가 우리 길드원 대표와 같은 캐릭터(= 같은 계정의 부캐)를 찾는다."""
+        job = self.job
 
         def load(gname):
             _, gid = self.find_guild(gname, [self.world_api])
@@ -308,7 +376,7 @@ class Scanner:
         out = {}
         for (name, gname), r in hits:
             ci = self.info(name) or {}
-            out.setdefault(r["rep"], []).append({**ci, "name": name, "guild": gname})
+            out.setdefault(r["rep"], []).append({**ci, "name": name, "guild": gname, "status": "confirmed"})
         return out, {"guilds": len(guild_names), "members": len(pairs),
                      "unknown": sum(1 for r in found if not r["rep"])}
 
@@ -317,9 +385,10 @@ LOOKUP_MAX = 60  # 이름 조회 한 번에 최대 몇 명 (핸즈 캐릭터 목
 
 
 def lookup(client, store, names, our_guild=""):
-    """이름(여러 개)으로 조회: 캐릭터마다 길드 + 그 계정의 유니온 대표 캐릭터와 대표의 길드.
+    """이름(여러 개)으로 조회: 먼저 캐릭터마다 최신 정보로 갱신 → 길드 + 그 계정의 유니온 대표 캐릭터와 대표의 길드.
     월드는 캐릭터 정보에서 알아낸다(여러 월드가 섞여 있어도 됨).
-    our_guild(가입하려는 우리 길드)를 주면 그 밖의 길드에 있는 캐릭터를 '다른 길드'로 표시한다.
+    our_guild(우리 길드)가 있으면 그 밖의 길드에 있는 캐릭터를 '다른 길드'로 표시하고,
+    그 길드의 길드원 목록과 대조해서 포착(confirmed) / 정보 갱신 필요(stale)를 가린다.
     넣은 이름끼리 대표가 같으면 같은 계정 — 핸즈 목록이면 전부 한 계정이어야 정상."""
     our_guild = (our_guild or "").strip()
     names = list(dict.fromkeys(names))[:LOOKUP_MAX]
@@ -328,14 +397,9 @@ def lookup(client, store, names, our_guild=""):
 
     def one(name):
         info = sc.info(name)
-        if info and not info.get("world"):
-            # 월드가 없는 예전 캐시 → 새로 받는다
-            oc = sc.ocid(name)
-            info = slim(client.character_basic(oc, sc.date))
-            store.put_char(oc, sc.date, info)
         if not info:
             return {"name": name, "found": False, "reason": "캐릭터를 찾을 수 없음 (이름·개명 확인)"}
-        world = info["world"]
+        world = info.get("world") or ""
         rep = sc.rep_of(name, world)
         rep_info = sc.info(rep["rep"]) if rep["rep"] else None
         guild = info.get("guild") or ""
@@ -343,6 +407,18 @@ def lookup(client, store, names, our_guild=""):
         real = info.get("name") or name
         other = bool(our_guild) and bool(guild) and guild != our_guild
         rep_other = bool(our_guild) and bool(rep_guild) and rep_guild != our_guild and rep["rep"] != real
+        dual = other or rep_other or (not our_guild and bool(rep["rep"]) and bool(guild)
+                                      and bool(rep_guild) and guild != rep_guild)
+        # 다른 길드에 있다고 나오면 그 길드의 길드원 목록과 대조
+        targets = []
+        if our_guild:
+            if other:
+                targets.append((real, guild))
+            if rep_other:
+                targets.append((rep["rep"], rep_guild))
+        elif dual:
+            targets = [(real, guild), (rep["rep"], rep_guild)]
+        checks = [{"who": w, "guild": g, "status": sc.verify(w, g, world)} for w, g in targets]
         return {
             "name": name, "found": True, "world": world, "char": info | {"name": real},
             "rep": (rep_info or {}) | {"name": rep["rep"]} if rep["rep"] else None,
@@ -351,9 +427,9 @@ def lookup(client, store, names, our_guild=""):
             "reason": rep["reason"],
             "other_guild": other,           # 이 캐릭터가 우리 말고 다른 길드에 있음
             "rep_other_guild": rep_other,   # 대표(본캐)가 우리 말고 다른 길드에 있음
-            # 우리 길드를 안 넣었을 때: 이 캐릭터와 대표가 서로 다른 길드면 이중길드
-            "dual": other or rep_other or (not our_guild and bool(rep["rep"]) and bool(guild)
-                                            and bool(rep_guild) and guild != rep_guild),
+            "dual": dual,
+            "checks": checks,               # 다른 길드 목록과 대조한 결과
+            "fresh": bool(info.get("fresh")),
         }
 
     out = sc._pmap(one, names)
@@ -368,14 +444,18 @@ def lookup(client, store, names, our_guild=""):
             r["same_account"] = [n for n in by_rep[(r["world"], r["rep"]["name"])] if n != r["name"]]
     suggest_fixes(sc, out, by_rep)
     found = [r for r in out if r["found"]]
+    all_checks = [c for r in out for c in r.get("checks", [])]
     return {
         "date": sc.date, "our_guild": our_guild, "results": out,
         "summary": {
             "total": len(out), "found": len(found), "not_found": len(out) - len(found),
             "dual": sum(1 for r in out if r.get("dual")),
+            "confirmed": sum(1 for c in all_checks if c["status"] == "confirmed"),
+            "stale": sum(1 for c in all_checks if c["status"] == "stale"),
+            "not_fresh": sum(1 for r in found if not r.get("fresh")),
             "accounts": len(by_rep),
             "unknown_rep": sum(1 for r in found if not r.get("rep")),
-            "worlds": sorted({r["world"] for r in found}),
+            "worlds": sorted({r["world"] for r in found if r["world"]}),
             "api_calls": client.calls, "cache_hits": sc.cache_hits,
         },
     }
@@ -468,11 +548,11 @@ def slim(d):
             "access": d.get("access_flag"), "world": d.get("world_name")}
 
 
-def build_result(guild, names, reps, infos, stale, others, activity, reverse):
+def build_result(guild, names, reps, infos, stale, others, activity, reverse, checks=None):
     def card(n):
         i = infos.get(n) or {}
         return {"name": n, "level": i.get("level"), "job": i.get("job"), "image": i.get("image"),
-                "guild": i.get("guild"), "away7": i.get("access") == "false"}
+                "guild": i.get("guild"), "away7": i.get("access") == "false", "fresh": bool(i.get("fresh"))}
 
     accounts = {}
     unknown = []
@@ -494,6 +574,7 @@ def build_result(guild, names, reps, infos, stale, others, activity, reverse):
         rg = a["rep"]["guild"]
         a["rep_in_ours"] = rg == guild
         a["forward"] = bool(rg) and rg != guild         # 본캐(대표)가 다른 길드
+        a["check"] = (checks or {}).get(rep)             # 그 길드 목록과 대조: confirmed / stale / unknown
         a["rep_guildless"] = rg == ""                    # 대표가 길드 없음
         a["others"] = sorted(others.get(rep, []), key=lambda c: -(c.get("level") or 0))
         a["reverse"] = bool(a["others"])                 # 부캐가 다른 길드
@@ -507,6 +588,9 @@ def build_result(guild, names, reps, infos, stale, others, activity, reverse):
         "accounts": out,
         "unknown": unknown,
         "summary": {
+            "confirmed": sum(1 for a in out if a.get("check") and a["check"]["status"] == "confirmed") +
+                         sum(1 for a in out if a["reverse"] and not a["forward"]),
+            "stale": sum(1 for a in out if a.get("check") and a["check"]["status"] == "stale"),
             "characters": len(names),
             "accounts": len(out),
             "unknown": len(unknown),
