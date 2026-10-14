@@ -48,6 +48,7 @@ class Job:
         self.error = None
         self.scan_id = None
         self.mode = "ours"  # ours = 우리 길드원 검색 / other = 길드 검색
+        self.owner = 0      # 검색한 계정 (혼자 쓰기 = 0)
         self.cancel_flag = False
         self.lock = threading.Lock()
 

@@ -24,10 +24,50 @@
     <a href="#guild" data-view="guild">길드 검색</a>
     <a href="#settings" data-view="settings">설정</a>
   </nav>
+  <div class="who-am-i" id="whoAmI" hidden><span id="whoName"></span><button type="button" class="ghost small" id="logoutBtn">로그아웃</button></div>
   <button class="theme-btn" id="themeBtn" type="button" title="라이트/다크 전환"></button>
 </header>
 
-<main>
+<!-- 처음 진입: 사용 방식 고르기 / 관리자 만들기 / 로그인 -->
+<section id="gate" class="gate" hidden>
+  <div class="gate-card card">
+    <img class="gate-logo" src="{{ url_for('static', filename='logo.svg', v=asset_v) }}" alt="">
+    <h1 class="title"><em>우</em>리 <em>길</em>드원 <em>관</em>리</h1>
+
+    <div id="gateChoose" hidden>
+      <p class="gate-q">이 사이트를 어떻게 쓰실 건가요?</p>
+      <div class="choose">
+        <button type="button" class="choice" data-mode="shared">
+          <b>다른 사람과 같이 쓸래요</b>
+          <span>운영진 여럿이 각자 아이디로 로그인해요. 지금 만드는 계정이 <b>관리자</b>가 되고, 관리자가 다른 사람 계정을 추가해요. API 키·길드·기록은 계정마다 따로 저장돼요.</span>
+        </button>
+        <button type="button" class="choice" data-mode="solo">
+          <b>저 혼자만 쓸래요</b>
+          <span>로그인 없이 바로 써요. 아이디·비밀번호가 필요 없어요. (나중에 '설정'에서 같이 쓰기로 바꿀 수 있어요)</span>
+        </button>
+      </div>
+    </div>
+
+    <form id="gateAdmin" hidden>
+      <p class="gate-q">관리자 계정 만들기</p>
+      <p class="hint" style="margin-top:0">이 계정으로 다른 운영진 계정을 추가하고 관리해요. 잊어버리지 않게 적어 두세요.</p>
+      <label>아이디 <input id="adId" autocomplete="username" placeholder="2~20글자" required></label>
+      <label>비밀번호 <input id="adPw" type="password" autocomplete="new-password" placeholder="6글자 이상" required></label>
+      <label>비밀번호 확인 <input id="adPw2" type="password" autocomplete="new-password" required></label>
+      <div class="row-end"><button type="button" class="ghost" id="adBack">뒤로</button><button class="primary big">관리자 만들고 시작</button></div>
+    </form>
+
+    <form id="gateLogin" hidden>
+      <p class="gate-q">로그인</p>
+      <label>아이디 <input id="lgId" autocomplete="username" required></label>
+      <label>비밀번호 <input id="lgPw" type="password" autocomplete="current-password" required></label>
+      <button class="primary big" style="width:100%;margin-top:6px">로그인</button>
+      <p class="hint">계정은 관리자가 만들어 줘요. 비밀번호를 잊었으면 관리자에게 초기화를 부탁하세요.</p>
+    </form>
+  </div>
+</section>
+
+<main id="app" hidden>
   <div id="needSetup" class="card setup-banner" hidden>
     <b>처음이신가요?</b> <span>'설정' 탭에서 넥슨 API 키와 우리 길드를 먼저 정해 주세요.</span>
     <a href="#settings" class="btn primary">설정하러 가기</a>
@@ -155,7 +195,16 @@
           <input id="sNexon" type="password" autocomplete="off" placeholder="test_… 또는 live_…">
         </label>
       </div>
-      <p class="hint">발급: <a href="https://openapi.nexon.com/ko/" target="_blank" rel="noopener">넥슨 Open API</a> → 로그인 → 애플리케이션 등록 → 메이플스토리 API 키</p>
+      <details class="howto" open>
+        <summary>넥슨 API 키 받는 방법 (무료, 3분)</summary>
+        <ol>
+          <li><a href="https://openapi.nexon.com/ko/" target="_blank" rel="noopener">openapi.nexon.com</a> 오른쪽 위 <b>로그인</b> (넥슨 계정)</li>
+          <li><b>내 애플리케이션</b> → <b>애플리케이션 등록</b></li>
+          <li>게임은 <b>메이플스토리</b>, 종류는 <b>개발 단계</b>(서비스 이름만 넣으면 돼요, 예: 길드 관리) → 약관 동의 → 등록</li>
+          <li><b>내 애플리케이션</b> → <b>애플리케이션 목록</b> → 만든 것을 눌러 나오는 <b>API Key</b>(보통 <code>test_</code>로 시작)를 복사해서 위 칸에 붙여넣고 <b>저장</b></li>
+        </ol>
+        <p class="muted">하루 호출 한도는 그 애플리케이션 화면에 나와요. 많이 쓰면 '서비스 단계'로 바꿔 한도를 늘릴 수 있어요(<code>live_</code> 키).</p>
+      </details>
 
       <h3>Claude API 키 <span class="muted">— 스크린샷 닉네임 읽기 (선택)</span></h3>
       <div class="key-now" id="claudeNow"></div>
@@ -169,16 +218,49 @@
           </select>
         </label>
       </div>
-      <p class="hint">발급: <a href="https://console.anthropic.com/" target="_blank" rel="noopener">Claude Console</a> → API Keys.
-        모델: opus(가장 정확, 스크린샷 4장에 약 150~250원) · sonnet(중간) · haiku(가장 쌈, 드문 글자를 자주 틀림).</p>
+      <details class="howto">
+        <summary>Claude API 키 받는 방법 (유료, 쓴 만큼)</summary>
+        <ol>
+          <li><a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a>에 가입·로그인</li>
+          <li><b>Billing</b>(결제)에서 카드를 등록하고 크레딧을 충전 (예: 5달러면 스크린샷 읽기 수십 번)</li>
+          <li><b>API Keys</b> → <b>Create Key</b> → 이름을 넣고 만들기</li>
+          <li>나온 키(<code>sk-ant-</code>로 시작)를 바로 복사해서 위 칸에 붙여넣고 <b>저장</b> — 창을 닫으면 다시 볼 수 없어요</li>
+        </ol>
+        <p class="muted">모델: opus(가장 정확, 스크린샷 4장에 약 150~250원) · sonnet(중간) · haiku(가장 쌈, 드문 글자를 자주 틀림). 스크린샷 읽기를 안 쓰면 없어도 돼요.</p>
+      </details>
 
       <div class="row-end">
         <button type="button" class="ghost" id="testBtn">넥슨 키로 우리 길드 찾아보기</button>
         <button class="primary big" type="submit">저장</button>
       </div>
-      <p class="hint">설정은 서버의 <code>data/guild.db</code>에 저장돼서 다음에도 그대로 유지돼요. 키는 화면에 앞뒤 몇 글자만 보여줘요.
+      <p class="hint" id="saveHint">설정은 서버의 <code>data/guild.db</code>에 저장돼서 다음에도 그대로 유지돼요. 키는 화면에 앞뒤 몇 글자만 보여줘요.
         이 파일엔 키가 들어 있으니 남에게 주지 마세요.</p>
     </form>
+
+    <!-- 같이 쓰기: 내 비밀번호 / 관리자: 계정 관리 -->
+    <div class="card form-card settings" id="accountBox" hidden>
+      <h3>내 계정 <span class="muted" id="meLabel"></span></h3>
+      <form id="pwForm" class="form-grid">
+        <label>지금 비밀번호 <input id="pwNow" type="password" autocomplete="current-password" required></label>
+        <label>새 비밀번호 <input id="pwNew" type="password" autocomplete="new-password" placeholder="6글자 이상" required></label>
+        <button class="ghost" type="submit">비밀번호 바꾸기</button>
+      </form>
+      <div id="adminBox" hidden>
+        <h3>계정 관리 <span class="muted">— 관리자만 보여요. 운영진 계정을 미리 만들어 아이디·비밀번호를 알려 주세요.</span></h3>
+        <form id="addUserForm" class="form-grid">
+          <label>아이디 <input id="nuId" placeholder="2~20글자" required></label>
+          <label>처음 비밀번호 <input id="nuPw" placeholder="6글자 이상" required></label>
+          <button class="primary" type="submit">계정 추가</button>
+        </form>
+        <div id="userList" class="user-list"></div>
+      </div>
+    </div>
+
+    <div class="card form-card settings" id="soloBox" hidden>
+      <h3>사용 방식 <span class="muted">— 지금: 혼자 쓰기 (로그인 없음)</span></h3>
+      <p class="hint" style="margin-top:0">운영진과 같이 쓰려면 바꾸세요. 관리자 계정을 만들면 지금 설정·기록은 그 계정으로 옮겨지고, 이후엔 모두 로그인해야 해요.</p>
+      <div class="row-end"><button type="button" class="ghost" id="toShared">다른 사람과 같이 쓰기로 바꾸기</button></div>
+    </div>
   </section>
 </main>
 

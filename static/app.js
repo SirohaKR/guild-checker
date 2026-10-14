@@ -9,6 +9,7 @@ const store = {
 async function api(path, opts = {}) {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
   const data = await r.json().catch(() => ({}));
+  if (r.status === 401 && (data.login || data.setup)) boot();  // 로그인이 풀렸거나 아직 설정 전 → 처음 화면으로
   if (!r.ok) throw new Error(data.error || `오류 ${r.status}`);
   return data;
 }
@@ -109,7 +110,105 @@ function paintSettings() {
 async function loadSettings() {
   cfg = await api("/api/settings").catch(() => ({}));
   paintSettings();
+  paintAccount();
 }
+
+// ── 계정 (같이 쓰기) ──
+let me = { mode: null, user: null };
+function paintAccount() {
+  const shared = me.mode === "shared";
+  $("#whoAmI").hidden = !shared;
+  $("#whoName").textContent = shared && me.user ? `${me.user.username}${me.user.is_admin ? " (관리자)" : ""}` : "";
+  $("#accountBox").hidden = !shared;
+  $("#soloBox").hidden = me.mode !== "solo";
+  $("#adminBox").hidden = !(shared && me.user?.is_admin);
+  $("#meLabel").textContent = shared && me.user ? `— ${me.user.username}` : "";
+  $("#saveHint").innerHTML = shared
+    ? "이 설정은 <b>내 계정에만</b> 저장돼요(다른 운영진은 각자 넣어요). 키는 화면에 앞뒤 몇 글자만 보여줘요."
+    : "설정은 서버의 <code>data/guild.db</code>에 저장돼서 다음에도 그대로 유지돼요. 키는 화면에 앞뒤 몇 글자만 보여줘요. 이 파일엔 키가 들어 있으니 남에게 주지 마세요.";
+  if (shared && me.user?.is_admin) loadUsers();
+}
+async function loadUsers() {
+  const list = await api("/api/users").catch(() => []);
+  paintUsers(list);
+}
+function paintUsers(list) {
+  $("#userList").innerHTML = list.map((u) => `<div class="user-row">
+      <b>${esc(u.username)}</b>${u.is_admin ? `<span class="badge acc-c">관리자</span>` : ""}
+      <span class="muted small">${esc(u.created_at.slice(0, 10))} 추가</span>
+      <span class="sp"></span>
+      <button type="button" class="ghost small" data-reset="${u.id}" data-name="${esc(u.username)}">비밀번호 초기화</button>
+      ${u.is_admin ? "" : `<button type="button" class="danger small" data-deluser="${u.id}" data-name="${esc(u.username)}">삭제</button>`}
+    </div>`).join("");
+  $("#userList").querySelectorAll("[data-reset]").forEach((b) => (b.onclick = async () => {
+    const pw = prompt(`'${b.dataset.name}'의 새 비밀번호 (6글자 이상)`);
+    if (!pw) return;
+    try { await api(`/api/users/${b.dataset.reset}/password`, { method: "POST", body: JSON.stringify({ password: pw }) }); toast("바꿨어요. 새 비밀번호를 알려 주세요."); }
+    catch (err) { toast(err.message, true); }
+  }));
+  $("#userList").querySelectorAll("[data-deluser]").forEach((b) => (b.onclick = async () => {
+    if (!confirm(`'${b.dataset.name}' 계정을 지울까요? 그 계정의 설정·검색 기록도 같이 지워져요.`)) return;
+    try { paintUsers(await api(`/api/users/${b.dataset.deluser}`, { method: "DELETE" })); toast("지웠어요"); }
+    catch (err) { toast(err.message, true); }
+  }));
+}
+$("#addUserForm").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    paintUsers(await api("/api/users", { method: "POST", body: JSON.stringify({ username: $("#nuId").value.trim(), password: $("#nuPw").value }) }));
+    toast(`'${$("#nuId").value.trim()}' 계정을 만들었어요. 아이디·비밀번호를 알려 주세요.`);
+    $("#nuId").value = ""; $("#nuPw").value = "";
+  } catch (err) { toast(err.message, true); }
+};
+$("#pwForm").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await api("/api/me/password", { method: "POST", body: JSON.stringify({ current: $("#pwNow").value, new: $("#pwNew").value }) });
+    $("#pwNow").value = ""; $("#pwNew").value = "";
+    toast("비밀번호를 바꿨어요");
+  } catch (err) { toast(err.message, true); }
+};
+$("#logoutBtn").onclick = async () => {
+  await api("/api/logout", { method: "POST" }).catch(() => {});
+  location.href = "/";
+};
+$("#toShared").onclick = () => { if (confirm("다른 사람과 같이 쓰기로 바꿀까요? 관리자 계정을 만들면 모두 로그인해야 해요.")) showGate("admin"); };
+
+// ── 처음 화면 (사용 방식 고르기 / 관리자 만들기 / 로그인) ──
+function showGate(step) {
+  $("#gate").hidden = false;
+  $("#app").hidden = true;
+  $("#gateChoose").hidden = step !== "choose";
+  $("#gateAdmin").hidden = step !== "admin";
+  $("#gateLogin").hidden = step !== "login";
+  document.querySelector("header nav").hidden = true;
+  $("#whoAmI").hidden = true;
+  (step === "admin" ? $("#adId") : step === "login" ? $("#lgId") : null)?.focus();
+}
+document.querySelectorAll(".choice").forEach((b) => (b.onclick = async () => {
+  if (b.dataset.mode === "shared") return showGate("admin");
+  try { await api("/api/setup", { method: "POST", body: JSON.stringify({ mode: "solo" }) }); location.hash = "#settings"; boot(); }
+  catch (err) { toast(err.message, true); }
+}));
+$("#adBack").onclick = () => (me.mode === "solo" ? boot() : showGate("choose"));
+$("#gateAdmin").onsubmit = async (e) => {
+  e.preventDefault();
+  if ($("#adPw").value !== $("#adPw2").value) return toast("비밀번호 두 칸이 달라요.", true);
+  try {
+    await api("/api/setup", { method: "POST", body: JSON.stringify({ mode: "shared", username: $("#adId").value.trim(), password: $("#adPw").value }) });
+    $("#adPw").value = $("#adPw2").value = "";
+    location.hash = "#settings";
+    toast("관리자 계정을 만들었어요. '설정'에서 API 키와 길드를 넣고, 아래에서 운영진 계정을 추가하세요.");
+    boot();
+  } catch (err) { toast(err.message, true); }
+};
+$("#gateLogin").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await api("/api/login", { method: "POST", body: JSON.stringify({ username: $("#lgId").value.trim(), password: $("#lgPw").value }) });
+    location.reload();
+  } catch (err) { toast(err.message, true); }
+};
 async function clearKey(k, fromEnv) {
   if (fromEnv) return toast(".env 파일에 있는 키예요. .env에서 지워 주세요.", true);
   if (!confirm("이 키를 지울까요?")) return;
@@ -216,7 +315,7 @@ async function openScan(id, { scroll = true } = {}) {
   const mode = (data.options || {}).mode === "other" ? "other" : "ours";
   const pane = panes[mode];
   Object.assign(pane, { data, filter: "all", query: "" });
-  if (mode === "ours") store.set("gc_last_scan", id);
+  if (mode === "ours") store.set(lastKey(), id);
   const want = mode === "other" ? "#guild" : "#members";
   if (location.hash.split("?")[0] !== want) { showView.keepScroll = true; location.hash = want; }
   renderPane(mode);
@@ -666,15 +765,26 @@ function applyFixes(pairs) {
   runLookup();
 }
 
-// ── 시작 ──
-(async function init() {
+// ── 시작: 사용 방식·로그인 확인 → 앱 ──
+const lastKey = () => `gc_last_scan_${me.user?.id ?? 0}`;
+let started = false;
+async function boot() {
+  me = await fetch("/api/status").then((r) => r.json()).catch(() => ({ mode: null, user: null }));
+  if (!me.mode) return showGate("choose");
+  if (!me.user) return showGate("login");
+  $("#gate").hidden = true;
+  $("#app").hidden = false;
+  document.querySelector("header nav").hidden = false;
   await loadSettings();
   showView();
+  if (started) return;
+  started = true;
   const running = await api("/api/jobs/current").catch(() => null);
   if (running) { setBusy(true); poll(running); }
-  const last = store.get("gc_last_scan");
+  const last = store.get(lastKey());
   if (last && !panes.ours.data) {
     try { panes.ours.data = await api(`/api/scans/${last}`); } catch (e) { panes.ours.data = null; }
   }
   renderPane("ours");
-})();
+}
+boot();

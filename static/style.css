@@ -357,3 +357,39 @@ code { background: var(--panel-2); border: 1px solid var(--line); border-radius:
 .verdict .links { margin-top: 6px; }
 .acc.is-focus { outline: 3px solid var(--sky); outline-offset: 2px; }
 .alts .links { margin-top: 8px; }
+
+/* ── 처음 화면 (사용 방식 / 관리자 만들기 / 로그인) */
+.gate { min-height: calc(100vh - 70px); display: grid; place-items: center; padding: 24px 16px; }
+.gate-card { width: min(100%, 640px); margin: 0; padding: 28px; display: flex; flex-direction: column; gap: 14px; }
+.gate-logo { width: 72px; height: 72px; align-self: center; }
+.gate-card h1.title { margin: 0; text-align: center; font-size: 30px; }
+.gate-q { font-family: "Maplestory", sans-serif; font-weight: 700; font-size: 18px; margin: 6px 0 2px; text-align: center; }
+.gate-card form { display: flex; flex-direction: column; gap: 12px; }
+.gate-card .row-end { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; }
+.choose { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 8px; }
+.choice { text-align: left; display: flex; flex-direction: column; gap: 8px; padding: 18px; border-radius: 16px;
+  background: var(--panel-2); border: 2px solid var(--line); color: var(--text); cursor: pointer; font: inherit; }
+.choice:hover, .choice:focus { border-color: var(--accent); background: var(--accent-soft); outline: none; }
+.choice > b { font-family: "Maplestory", sans-serif; font-size: 17px; color: var(--accent); }
+.choice span { font-size: 13px; color: var(--muted); line-height: 1.55; }
+.choice span b { color: var(--text); }
+
+/* ── 머리: 로그인한 계정 */
+.who-am-i { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.who-am-i button { padding: 4px 10px; font-size: 12px; }
+
+/* ── 설정: 키 받는 방법, 계정 목록 */
+.howto { margin: 6px 0 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); padding: 10px 14px; }
+.howto summary { cursor: pointer; font-weight: 800; color: var(--accent); }
+.howto ol { margin: 10px 0 6px; padding-left: 20px; display: flex; flex-direction: column; gap: 5px; font-size: 13.5px; }
+.howto p { margin: 4px 0 2px; font-size: 12.5px; }
+.user-list { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.user-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 9px 12px; border: 1px solid var(--line);
+  border-radius: 12px; background: var(--panel-2); }
+.user-row .sp { flex: 1; }
+.user-row button { padding: 4px 10px; font-size: 12px; }
+#accountBox, #soloBox { margin-top: 14px; }
+@media (max-width: 640px) {
+  .gate-card { padding: 20px 16px; }
+  .who-am-i { order: 2; }
+}

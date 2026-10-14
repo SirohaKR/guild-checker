@@ -1,10 +1,20 @@
 # 우리 길드원 관리 — 웹 서버 (화면 + 검색 요청 받기)
+#
+# 사용 방식 (처음 들어온 사람이 고름, data/guild.db에 저장)
+#  - solo  : 혼자 쓰기. 로그인 없음. 설정·기록은 user 0.
+#  - shared: 같이 쓰기. 처음 고른 사람이 관리자 계정을 만들고, 관리자가 사용자 계정을 추가한다.
+#            모두 로그인해야 하고, API 키·우리 길드·검색 기록은 계정마다 따로.
 import os
+import re
 import secrets
 import threading
+import time
 import traceback
+from datetime import timedelta
+from functools import wraps
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, session
+from werkzeug.security import check_password_hash, generate_password_hash
 
 import checker
 import nexon
@@ -16,25 +26,197 @@ app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024  # 스크린샷 여러 장
 store = Store()
 store.prune()
 
+# 로그인 쿠키 서명용 비밀값 — 한 번 만들어 DB에 두면 서버를 다시 켜도 로그인이 유지된다
+if not store.get_config("secret_key"):
+    store.set_config("secret_key", secrets.token_hex(32))
+app.secret_key = store.get_config("secret_key")
+app.config.update(SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_HTTPONLY=True,
+                  PERMANENT_SESSION_LIFETIME=timedelta(days=30))
+
 jobs = {}          # 진행 중이거나 끝난 검색 작업 (서버를 다시 켜면 사라지고, 결과는 DB에 남는다)
 jobs_lock = threading.Lock()
 
 REVERSE_CHOICES = {0, 50, 200, 1000, -1}  # 역방향 검사 범위 (길드 랭킹 상위 N개, -1 = 전체)
+NAME_RE = re.compile(r"^[0-9A-Za-z가-힣_.-]{2,20}$")
 
 
-def err(msg, code=400):
-    return jsonify({"error": msg}), code
+def err(msg, code=400, **extra):
+    return jsonify({"error": msg, **extra}), code
 
 
-# ── 설정 (data/guild.db에 저장 — 로컬에서 돌려도 같은 방식) ──
-# API 키는 '설정' 탭 값이 먼저, 없으면 .env(환경변수) 값을 쓴다.
+# ── 사용 방식 · 로그인 ──
 
-def settings():
-    s = store.get_settings()
+def mode():
+    return store.get_config("mode")  # None(아직 안 고름) / "solo" / "shared"
+
+
+def current_user():
+    """지금 요청한 사람: solo면 {'id': 0}, shared면 로그인한 계정, 아니면 None."""
+    m = mode()
+    if m == "solo":
+        return {"id": 0, "username": None, "is_admin": True}
+    if m == "shared" and session.get("uid") is not None:
+        u = store.get_user(uid=session["uid"])
+        if u:
+            return {"id": u["id"], "username": u["username"], "is_admin": bool(u["is_admin"])}
+    return None
+
+
+def need_user(fn):
+    @wraps(fn)
+    def wrapper(*a, **kw):
+        if not mode():
+            return err("처음 사용 방식을 먼저 골라 주세요.", 401, setup=True)
+        u = current_user()
+        if not u:
+            return err("로그인해 주세요.", 401, login=True)
+        return fn(u, *a, **kw)
+    return wrapper
+
+
+def need_admin(fn):
+    @wraps(fn)
+    @need_user
+    def wrapper(u, *a, **kw):
+        if mode() != "shared" or not u["is_admin"]:
+            return err("관리자만 할 수 있어요.", 403)
+        return fn(u, *a, **kw)
+    return wrapper
+
+
+def check_new_account(username, password):
+    if not NAME_RE.match(username or ""):
+        return "아이디는 2~20글자 (한글·영문·숫자·_ . -) 로 해 주세요."
+    if len(password or "") < 6:
+        return "비밀번호는 6글자 이상으로 해 주세요."
+    return None
+
+
+def login_as(uid):
+    session.clear()
+    session.permanent = True
+    session["uid"] = uid
+
+
+@app.get("/api/status")
+def status():
+    u = current_user()
+    return jsonify({"mode": mode(), "user": u})
+
+
+@app.post("/api/setup")
+def setup():
+    """처음 사용 방식 고르기. 혼자 쓰다가 같이 쓰기로 바꾸는 것도 여기서 (기존 설정·기록은 관리자 계정으로)."""
+    body = request.get_json(silent=True) or {}
+    want, now_mode = body.get("mode"), mode()
+    if now_mode and not (now_mode == "solo" and want == "shared"):
+        return err("이미 사용 방식이 정해져 있어요.", 409)
+    if want == "solo":
+        store.set_config("mode", "solo")
+        return status()
+    if want != "shared":
+        return err("사용 방식을 골라 주세요.")
+    username, password = (body.get("username") or "").strip(), body.get("password") or ""
+    problem = check_new_account(username, password)
+    if problem:
+        return err(problem)
+    uid = store.add_user(username, generate_password_hash(password), is_admin=True)
+    store.move_owner(0, uid)  # 혼자 쓰던 설정·기록이 있으면 관리자 것으로
+    store.set_config("mode", "shared")
+    login_as(uid)
+    return status()
+
+
+@app.post("/api/login")
+def login():
+    if mode() != "shared":
+        return err("로그인이 필요 없는 사용 방식이에요.")
+    body = request.get_json(silent=True) or {}
+    u = store.get_user(username=(body.get("username") or "").strip())
+    if not u or not check_password_hash(u["pw_hash"], body.get("password") or ""):
+        time.sleep(1)  # 비밀번호 마구 넣어 보기 늦추기
+        return err("아이디나 비밀번호가 맞지 않아요.", 401)
+    login_as(u["id"])
+    return status()
+
+
+@app.post("/api/logout")
+def logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/me/password")
+@need_user
+def change_my_password(u):
+    if mode() != "shared":
+        return err("혼자 쓰기에는 비밀번호가 없어요.")
+    body = request.get_json(silent=True) or {}
+    me = store.get_user(uid=u["id"])
+    if not check_password_hash(me["pw_hash"], body.get("current") or ""):
+        return err("지금 비밀번호가 맞지 않아요.")
+    if len(body.get("new") or "") < 6:
+        return err("새 비밀번호는 6글자 이상으로 해 주세요.")
+    store.set_password(u["id"], generate_password_hash(body["new"]))
+    return jsonify({"ok": True})
+
+
+# ── 계정 관리 (관리자) ──
+
+@app.get("/api/users")
+@need_admin
+def users(u):
+    return jsonify(store.list_users())
+
+
+@app.post("/api/users")
+@need_admin
+def add_user(u):
+    body = request.get_json(silent=True) or {}
+    username, password = (body.get("username") or "").strip(), body.get("password") or ""
+    problem = check_new_account(username, password)
+    if problem:
+        return err(problem)
+    if store.get_user(username=username):
+        return err("이미 있는 아이디예요.")
+    store.add_user(username, generate_password_hash(password))
+    return jsonify(store.list_users())
+
+
+@app.post("/api/users/<int:uid>/password")
+@need_admin
+def reset_password(u, uid):
+    body = request.get_json(silent=True) or {}
+    if len(body.get("password") or "") < 6:
+        return err("비밀번호는 6글자 이상으로 해 주세요.")
+    if not store.get_user(uid=uid):
+        return err("그런 계정이 없어요.", 404)
+    store.set_password(uid, generate_password_hash(body["password"]))
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/users/<int:uid>")
+@need_admin
+def delete_user(u, uid):
+    target = store.get_user(uid=uid)
+    if not target:
+        return err("그런 계정이 없어요.", 404)
+    if target["is_admin"]:
+        return err("관리자 계정은 지울 수 없어요.")
+    store.delete_user(uid)
+    return jsonify(store.list_users())
+
+
+# ── 계정별 설정 (data/guild.db) ──
+# 혼자 쓰기: 설정 탭 값이 먼저, 없으면 .env(환경변수). 같이 쓰기: 계정마다 설정 탭 값만.
+
+def settings(uid):
+    s = store.get_settings(uid)
+    env = (lambda k, d="": os.environ.get(k, d)) if mode() == "solo" else (lambda k, d="": d)
     return {
-        "nexon_key": s.get("nexon_key") or os.environ.get("NEXON_API_KEY", ""),
-        "claude_key": s.get("claude_key") or os.environ.get("ANTHROPIC_API_KEY", ""),
-        "claude_model": s.get("claude_model") or os.environ.get("CLAUDE_MODEL") or vision.DEFAULT_MODEL,
+        "nexon_key": s.get("nexon_key") or env("NEXON_API_KEY"),
+        "claude_key": s.get("claude_key") or env("ANTHROPIC_API_KEY"),
+        "claude_model": s.get("claude_model") or env("CLAUDE_MODEL") or vision.DEFAULT_MODEL,
         "world": s.get("world") or "",
         "guild": s.get("guild") or "",
     }
@@ -44,8 +226,8 @@ def mask(key):
     return f"{key[:6]}…{key[-4:]}" if len(key) > 12 else ("••••" if key else "")
 
 
-def nexon_client():
-    key = settings()["nexon_key"]
+def nexon_client(uid):
+    key = settings(uid)["nexon_key"]
     if not key:
         raise nexon.NexonError("넥슨 API 키가 없어요. '설정' 탭에서 넣어 주세요.")
     return nexon.Client(key)
@@ -64,9 +246,10 @@ def index():
 
 
 @app.get("/api/settings")
-def get_settings():
-    s = settings()
-    saved = store.get_settings()
+@need_user
+def get_settings(u):
+    s = settings(u["id"])
+    saved = store.get_settings(u["id"])
     return jsonify({
         "world": s["world"], "guild": s["guild"], "claude_model": s["claude_model"],
         "nexon_key": mask(s["nexon_key"]), "claude_key": mask(s["claude_key"]),
@@ -77,7 +260,8 @@ def get_settings():
 
 
 @app.post("/api/settings")
-def save_settings():
+@need_user
+def save_settings(u):
     body = request.get_json(silent=True) or {}
     values = {}
     if "world" in body:
@@ -97,19 +281,19 @@ def save_settings():
             values[k] = v
         elif body.get("clear_" + k):
             values[k] = None
-    store.set_settings(values)
+    store.set_settings(values, u["id"])
     return get_settings()
 
 
 @app.post("/api/settings/test")
-def test_settings():
+@need_user
+def test_settings(u):
     """넥슨 키로 우리 길드를 실제로 찾아본다."""
-    s = settings()
+    s = settings(u["id"])
     if not (s["world"] and s["guild"]):
         return err("월드와 우리 길드 이름을 먼저 저장해 주세요.")
     try:
-        c = nexon_client()
-        gid = None
+        c = nexon_client(u["id"])
         for w in checker.WORLD_ALIASES.get(s["world"], [s["world"]]):
             gid = c.guild_id(s["guild"], w)
             if gid:
@@ -124,12 +308,13 @@ def test_settings():
 # ── 길드원 검색 / 길드 검색 (백그라운드 작업) ──
 
 @app.post("/api/scan")
-def start_scan():
+@need_user
+def start_scan(u):
     """mode=ours: 설정의 우리 길드를 심층 검사 / mode=other: 아무 길드나 (길드 검색 탭)."""
     body = request.get_json(silent=True) or {}
-    s = settings()
-    mode = body.get("mode") or "ours"
-    if mode == "ours":
+    s = settings(u["id"])
+    kind = body.get("mode") or "ours"
+    if kind == "ours":
         world, guild = s["world"], s["guild"]
         if not guild:
             return err("'설정' 탭에서 우리 길드를 먼저 정해 주세요.")
@@ -142,25 +327,25 @@ def start_scan():
     activity = bool(body.get("activity"))
     focus = [str(f) for f in (body.get("focus") or []) if f][:20]
     if world not in checker.WORLDS:
-        return err("월드를 골라 주세요." if mode != "ours" else "'설정' 탭에서 월드를 정해 주세요.")
+        return err("월드를 골라 주세요." if kind != "ours" else "'설정' 탭에서 월드를 정해 주세요.")
     if not guild:
         return err("길드 이름을 넣어 주세요.")
     if reverse_top not in REVERSE_CHOICES:
         return err("역방향 범위가 올바르지 않아요.")
     try:
-        client = nexon_client()
+        client = nexon_client(u["id"])
     except nexon.NexonError as e:
         return err(str(e))
 
     with jobs_lock:
-        if any(j.status == "running" for j in jobs.values()):
-            return err("이미 다른 검색이 돌고 있어요. 끝난 뒤에 다시 눌러 주세요.", 409)
+        if any(j.status == "running" and j.owner == u["id"] for j in jobs.values()):
+            return err("이미 검색이 돌고 있어요. 끝난 뒤에 다시 눌러 주세요.", 409)
         job = checker.Job(secrets.token_hex(6), world, guild)
-        job.mode = mode
+        job.mode, job.owner = kind, u["id"]
         jobs[job.id] = job
 
-    options = {"mode": mode, "reverse_top": reverse_top, "activity": activity, "focus": focus,
-               "deep": mode == "ours"}
+    options = {"mode": kind, "reverse_top": reverse_top, "activity": activity, "focus": focus,
+               "deep": kind == "ours"}
     threading.Thread(target=run_job, args=(job, client, world, guild, options), daemon=True).start()
     return jsonify(job.to_dict())
 
@@ -171,7 +356,7 @@ def run_job(job, client, world, guild, options):
                              deep=options["deep"])
         result = sc.run()
         g = result["guild"]
-        job.scan_id = store.save_scan(world, g["name"], g["date"], options, result["summary"], result)
+        job.scan_id = store.save_scan(world, g["name"], g["date"], options, result["summary"], result, job.owner)
         job.status = "done"
     except checker.Cancelled:
         job.status, job.error = "cancelled", "검색을 멈췄어요."
@@ -182,23 +367,31 @@ def run_job(job, client, world, guild, options):
         job.status, job.error = "error", f"예상 못 한 오류: {e}"
 
 
+def my_job(u, job_id):
+    job = jobs.get(job_id)
+    return job if job and job.owner == u["id"] else None
+
+
 @app.get("/api/jobs/current")
-def current_job():
+@need_user
+def current_job(u):
     """화면을 새로 열었을 때 돌고 있는 검색이 있으면 이어서 보여주기 위함."""
     with jobs_lock:
-        running = [j for j in jobs.values() if j.status == "running"]
+        running = [j for j in jobs.values() if j.status == "running" and j.owner == u["id"]]
     return jsonify(running[0].to_dict() if running else None)
 
 
 @app.get("/api/jobs/<job_id>")
-def job_status(job_id):
-    job = jobs.get(job_id)
+@need_user
+def job_status(u, job_id):
+    job = my_job(u, job_id)
     return jsonify(job.to_dict()) if job else err("그런 작업이 없어요.", 404)
 
 
 @app.post("/api/jobs/<job_id>/cancel")
-def job_cancel(job_id):
-    job = jobs.get(job_id)
+@need_user
+def job_cancel(u, job_id):
+    job = my_job(u, job_id)
     if not job:
         return err("그런 작업이 없어요.", 404)
     job.cancel_flag = True
@@ -206,29 +399,33 @@ def job_cancel(job_id):
 
 
 @app.get("/api/scans")
-def scans():
-    return jsonify(store.list_scans())
+@need_user
+def scans(u):
+    return jsonify(store.list_scans(u["id"]))
 
 
 @app.get("/api/scans/<int:scan_id>")
-def scan(scan_id):
-    s = store.get_scan(scan_id)
+@need_user
+def scan(u, scan_id):
+    s = store.get_scan(scan_id, u["id"])
     if not s:
-        return err("그런 검사 기록이 없어요.", 404)
-    s["diff"] = checker.compare(s["result"], store.previous_scan(s["world"], s["guild"], s["id"]))
+        return err("그런 검색 기록이 없어요.", 404)
+    s["diff"] = checker.compare(s["result"], store.previous_scan(s["world"], s["guild"], s["id"], u["id"]))
     return jsonify(s)
 
 
 @app.delete("/api/scans/<int:scan_id>")
-def scan_delete(scan_id):
-    store.delete_scan(scan_id)
+@need_user
+def scan_delete(u, scan_id):
+    store.delete_scan(scan_id, u["id"])
     return jsonify({"ok": True})
 
 
 # ── 캐릭터명 검색 ──
 
 @app.post("/api/lookup")
-def lookup():
+@need_user
+def lookup(u):
     """이름으로 조회 (가입 신청자 확인용). 우리 길드는 설정 값."""
     body = request.get_json(silent=True) or {}
     names = [n.strip() for n in str(body.get("names") or "").replace(",", "\n").splitlines() if n.strip()]
@@ -238,16 +435,17 @@ def lookup():
     if len(names) > checker.LOOKUP_MAX:
         return err(f"한 번에 {checker.LOOKUP_MAX}명까지 조회할 수 있어요.")
     try:
-        return jsonify(checker.lookup(nexon_client(), store, names, settings()["guild"]))
+        return jsonify(checker.lookup(nexon_client(u["id"]), store, names, settings(u["id"])["guild"]))
     except nexon.NexonError as e:
         return err(str(e), 502)
 
 
 @app.post("/api/read-image")
-def read_image():
+@need_user
+def read_image(u):
     """스크린샷에서 캐릭터 닉네임 읽기 (Claude API)."""
     files = request.files.getlist("images")
-    s = settings()
+    s = settings(u["id"])
     try:
         imgs = [(f.read(), f.mimetype) for f in files if f]
         return jsonify(vision.read_names(imgs, s["claude_key"], s["claude_model"]))
