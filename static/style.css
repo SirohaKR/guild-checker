@@ -393,3 +393,8 @@ code { background: var(--panel-2); border: 1px solid var(--line); border-radius:
   .gate-card { padding: 20px 16px; }
   .who-am-i { order: 2; }
 }
+
+/* ── 길드 검색: 길드원 목록 */
+.member-grid .ch { padding: 8px; gap: 8px; }
+.member-grid .ch .badge { flex: none; }
+.ch.member.focus { border: 2px solid var(--dual); background: var(--dual-soft); }

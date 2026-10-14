@@ -323,7 +323,7 @@ def test_settings(u):
 @app.post("/api/scan")
 @need_user
 def start_scan(u):
-    """mode=ours: 설정의 우리 길드를 심층 검사 / mode=other: 아무 길드나 (길드 검색 탭)."""
+    """mode=ours: 설정의 우리 길드를 심층 검사 / mode=other: 아무 길드의 길드원 조회만 (길드 검색 탭)."""
     body = request.get_json(silent=True) or {}
     s = settings(u["id"])
     kind = body.get("mode") or "ours"
@@ -367,6 +367,11 @@ def run_job(job, client, world, guild, options):
     try:
         sc = checker.Scanner(client, store, job, world, guild, options["reverse_top"], options["activity"],
                              deep=options["deep"])
+        if options["mode"] == "other":
+            # 길드 검색: 길드원 캐릭터 조회만, 기록에 남기지 않음
+            job.result = sc.members_view()
+            job.status = "done"
+            return
         result = sc.run()
         g = result["guild"]
         job.scan_id = store.save_scan(world, g["name"], g["date"], options, result["summary"], result, job.owner)

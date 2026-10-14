@@ -49,6 +49,7 @@ class Job:
         self.scan_id = None
         self.mode = "ours"  # ours = 우리 길드원 검색 / other = 길드 검색
         self.owner = 0      # 검색한 계정 (혼자 쓰기 = 0)
+        self.result = None  # 길드 검색 결과 (저장하지 않고 화면에 바로 줌)
         self.cancel_flag = False
         self.lock = threading.Lock()
 
@@ -70,7 +71,7 @@ class Job:
             return {"id": self.id, "status": self.status, "world": self.world, "guild": self.guild,
                     "step": self.step, "steps": self.steps, "phase": self.phase,
                     "done": self.done, "total": self.total, "error": self.error, "scan_id": self.scan_id,
-                    "mode": self.mode}
+                    "mode": self.mode, "result": self.result if self.status == "done" else None}
 
 
 class Scanner:
@@ -339,6 +340,37 @@ class Scanner:
                   "seconds": round(time.time() - started, 1)})
         return result
 
+    def members_view(self):
+        """길드 검색: 그 길드의 길드원 캐릭터를 최신 정보로 조회만 한다 (의심 판정 없음)."""
+        started = time.time()
+        job = self.job
+        job.steps = 2
+        job.start_phase("길드 정보 확인", 1)
+        self.world_api, gid = self.find_guild(self.guild_input, WORLD_ALIASES.get(self.world, [self.world]))
+        if not gid:
+            raise ScanError(f"'{self.world}' 월드에서 '{self.guild_input}' 길드를 찾지 못했어요. 이름과 월드를 확인해 주세요.")
+        g = self.members_of(gid)
+        name = g["guild_name"] or self.guild_input
+        names = list(dict.fromkeys(g["members"]))
+        job.tick()
+
+        job.start_phase("길드원 정보 최신으로 조회", len(names))
+        members = []
+        for n, i in zip(names, self._pmap(self.info, names)):
+            i = i or {}
+            members.append({"name": n, "found": bool(i), "level": i.get("level"), "job": i.get("job"),
+                            "image": i.get("image"), "guild": i.get("guild"), "fresh": bool(i.get("fresh")),
+                            "away7": i.get("access") == "false"})
+        members.sort(key=lambda m: -(m["level"] or 0))
+        return {
+            "guild": {"name": name, "world": self.world, "master": g["master"], "level": g["level"]},
+            "members": members,
+            "summary": {"characters": len(members), "not_found": sum(1 for m in members if not m["found"]),
+                        # 길드원 목록엔 있는데 캐릭터 정보엔 다른 길드로 나오는 사람 (캐릭터 정보가 옛날 것)
+                        "info_differs": sum(1 for m in members if m["found"] and m["guild"] != name),
+                        "api_calls": self.c.calls, "seconds": round(time.time() - started, 1)},
+        }
+
     def ranked_guilds(self, our_guild):
         """길드 랭킹 상위 reverse_top개(-1이면 전체) 길드 이름."""
         job = self.job
@@ -406,10 +438,15 @@ def lookup(client, store, names, our_guild=""):
         guild = info.get("guild") or ""
         rep_guild = (rep_info or {}).get("guild") or ""
         real = info.get("name") or name
-        other = bool(our_guild) and bool(guild) and guild != our_guild
-        rep_other = bool(our_guild) and bool(rep_guild) and rep_guild != our_guild and rep["rep"] != real
-        dual = other or rep_other or (not our_guild and bool(rep["rep"]) and bool(guild)
-                                      and bool(rep_guild) and guild != rep_guild)
+
+        def flags(guild, rep_guild):
+            other = bool(our_guild) and bool(guild) and guild != our_guild
+            rep_other = bool(our_guild) and bool(rep_guild) and rep_guild != our_guild and rep["rep"] != real
+            dual = other or rep_other or (not our_guild and bool(rep["rep"]) and bool(guild)
+                                          and bool(rep_guild) and guild != rep_guild)
+            return other, rep_other, dual
+
+        other, rep_other, dual = flags(guild, rep_guild)
         # 다른 길드에 있다고 나오면 그 길드의 길드원 목록과 대조
         targets = []
         if our_guild:
@@ -420,6 +457,10 @@ def lookup(client, store, names, our_guild=""):
         elif dual:
             targets = [(real, guild), (rep["rep"], rep_guild)]
         checks = [{"who": w, "guild": g, "status": sc.verify(w, g, world)} for w, g in targets]
+        # 목록엔 없음(stale) → 이미 나간 것으로 보고 그 길드 소속에서 뺀 뒤 다시 판단 (길드 목록을 더 믿음)
+        left = {c["who"]: c["guild"] for c in checks if c["status"] == "stale"}
+        if left:
+            other, rep_other, dual = flags("" if real in left else guild, "" if rep["rep"] in left else rep_guild)
         return {
             "name": name, "found": True, "world": world, "char": info | {"name": real},
             "rep": (rep_info or {}) | {"name": rep["rep"]} if rep["rep"] else None,
@@ -430,6 +471,7 @@ def lookup(client, store, names, our_guild=""):
             "rep_other_guild": rep_other,   # 대표(본캐)가 우리 말고 다른 길드에 있음
             "dual": dual,
             "checks": checks,               # 다른 길드 목록과 대조한 결과
+            "left_guild": left.get(real),   # 캐릭터 정보엔 이 길드인데 그 길드 목록엔 없음 (나간 것으로 보임)
             "fresh": bool(info.get("fresh")),
         }
 
@@ -574,9 +616,11 @@ def build_result(guild, names, reps, infos, stale, others, activity, reverse, ch
     for rep, a in accounts.items():
         rg = a["rep"]["guild"]
         a["rep_in_ours"] = rg == guild
-        a["forward"] = bool(rg) and rg != guild         # 본캐(대표)가 다른 길드
         a["check"] = (checks or {}).get(rep)             # 그 길드 목록과 대조: confirmed / stale / unknown
-        a["rep_guildless"] = rg == ""                    # 대표가 길드 없음
+        # 캐릭터 정보엔 다른 길드인데 그 길드 목록엔 없으면 → 이미 나간 것으로 보고 의심에서 뺀다 (길드 목록을 더 믿음)
+        a["left_guild"] = a["check"]["guild"] if a["check"] and a["check"]["status"] == "stale" else None
+        a["forward"] = bool(rg) and rg != guild and not a["left_guild"]   # 본캐(대표)가 다른 길드
+        a["rep_guildless"] = rg == "" or bool(a["left_guild"])   # 대표가 길드 없음 (나간 것으로 보이는 경우 포함)
         a["others"] = sorted(others.get(rep, []), key=lambda c: -(c.get("level") or 0))
         a["reverse"] = bool(a["others"])                 # 부캐가 다른 길드
         a["dual"] = a["forward"] or a["reverse"]

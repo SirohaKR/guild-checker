@@ -56,7 +56,7 @@ function suspectLinks(name, guild, world, focus) {
 // 다른 길드 대조 결과
 const CHECK = {
   confirmed: ["dual", "포착", "그 길드의 길드원 목록에도 있어요"],
-  stale: ["gold", "정보 갱신 필요", "그 길드 목록엔 없어요 — 신청자에게 이 캐릭터로 한 번 접속해서 정보를 갱신해 달라고 해 주세요"],
+  stale: ["gold", "이미 나간 것으로 보임", "캐릭터 정보엔 이 길드로 나오지만 그 길드의 길드원 목록엔 없어요. 캐릭터 정보는 그 캐릭터로 접속해야 갱신돼서 옛날 길드가 남아 있는 거예요 — 확실히 하려면 그 캐릭터로 한 번 접속해 달라고 해 주세요"],
   unknown: ["gray", "확인 불가", "그 길드의 길드원 목록을 받지 못했어요 — 메애기에서 직접 확인해 주세요"],
 };
 function checkLine(c, name) {
@@ -305,8 +305,9 @@ async function finish(job) {
   $("#gProgress").hidden = true;
   if (job.status === "done") {
     toast("검색 끝!");
+    if (job.mode === "other") return renderGuild(job.result);
     await openScan(job.scan_id);
-    if (job.mode !== "other") loadHistory();
+    loadHistory();
   } else {
     toast(job.error || "검색이 멈췄어요.", job.status === "error");
   }
@@ -315,18 +316,16 @@ async function finish(job) {
 // ── 검색 결과 (길드원 검색 → #result, 길드 검색 → #guildResult) ──
 const panes = {
   ours: { box: "#result", data: null, filter: "all", query: "" },
-  other: { box: "#guildResult", data: null, filter: "all", query: "" },
 };
 
 async function openScan(id, { scroll = true } = {}) {
   let data;
   try { data = await api(`/api/scans/${id}`); } catch (err) { return toast(err.message, true); }
-  const mode = (data.options || {}).mode === "other" ? "other" : "ours";
+  const mode = "ours";
   const pane = panes[mode];
   Object.assign(pane, { data, filter: "all", query: "" });
-  if (mode === "ours") store.set(lastKey(), id);
-  const want = mode === "other" ? "#guild" : "#members";
-  if (location.hash.split("?")[0] !== want) { showView.keepScroll = true; location.hash = want; }
+  store.set(lastKey(), id);
+  if (location.hash.split("?")[0] !== "#members") { showView.keepScroll = true; location.hash = "#members"; }
   renderPane(mode);
   if (scroll) $(pane.box).scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -369,10 +368,12 @@ function accCard(a, ctx) {
     const gs = [...new Set(a.others.map((c) => c.guild))];
     alts += `<div class="ttl red" style="margin-top:${ours.length ? 10 : 2}px">다른 길드에 있는 부캐 ${a.others.length} <span class="muted">(그 길드 목록에서 확인 · 포착)</span></div>
       <div class="chars">${a.others.map((c) => charChip(c, true)).join("")}</div>
-      ${gs.map((g) => suspectLinks("", g, ctx.world, r.name)).join("")}`;
+      ${gs.map((g) => suspectLinks("", g, ctx.world, a.others.filter((c) => c.guild === g).map((c) => c.name).join(","))).join("")}`;
   }
   let check = "";
-  if (a.forward) {
+  if (a.left_guild) {
+    check = checkLine(a.check, r.name);
+  } else if (a.forward) {
     check = (a.check ? checkLine(a.check, r.name) : "") + suspectLinks(r.name, r.guild, ctx.world, r.name);
   } else if (r.guild === null || (!r.fresh && a.dual)) {
     check = `<div class="check gray"><b>최신 정보 없음</b> <span>메애기에서 직접 확인해 주세요</span></div>${suspectLinks(r.name, "", ctx.world)}`;
@@ -402,16 +403,12 @@ function renderPane(mode) {
   const pane = panes[mode];
   const box = $(pane.box);
   const cur = pane.data;
-  if (!cur) { box.innerHTML = mode === "ours" ? welcome() : ""; return; }
+  if (!cur) { box.innerHTML = welcome(); return; }
   const res = cur.result, s = res.summary, g = res.guild, d = cur.diff, o = cur.options || {};
-  const other = mode === "other";
-  const focus = new Set(o.focus || []);
-  pane.focus = focus;
-  const ctx = { world: g.world, focus, other };
   const revTxt = { 0: "끔", "-1": "전체 길드" }[o.reverse_top] ?? `상위 ${o.reverse_top}개 길드`;
 
   let diffHtml = "";
-  if (d && !other) {
+  if (d) {
     const list = (arr) => (arr.length ? arr.map(esc).join(", ") : "<span class='muted'>없음</span>");
     diffHtml = `<div class="card"><h3 style="margin-bottom:10px">지난 검색(${esc(d.prev_date)} 기준)과 비교</h3>
       <div class="diff">
@@ -421,47 +418,25 @@ function renderPane(mode) {
         <div><b>나간 캐릭터</b>${list(d.left)}</div>
       </div></div>`;
   }
-
-  // 길드 검색: 찾는 계정이 이 길드에 몇 명 있는지 맨 위에
-  let focusHtml = "";
-  if (other && focus.size) {
-    focusHtml = [...focus].map((f) => {
-      const a = res.accounts.find((x) => x.rep.name === f);
-      if (!a) return `<div class="verdict warn">「${esc(f)}」 계정의 캐릭터는 이 길드에 없어요
-        <span>길드원 목록에 없으면 그 캐릭터 정보가 옛날 것일 수 있어요 — 신청자에게 접속해서 갱신해 달라고 해 주세요.</span>
-        ${suspectLinks(f, g.name, g.world)}</div>`;
-      const names = [...a.ours.map((c) => c.name)];
-      return `<div class="verdict bad">「${esc(f)}」 계정의 캐릭터가 이 길드에 ${names.length}명 있어요 · 포착
-        <span>${names.map(esc).join(", ")}</span></div>`;
-    }).join("");
-  }
-
-  const dual = res.accounts.filter((a) => a.dual && matches(a, pane));
-  const normal = res.accounts.filter((a) => !a.dual && matches(a, pane));
-  const unk = res.unknown.filter((u) => !pane.query || u.name.toLowerCase().includes(pane.query.toLowerCase()));
-  const showUnk = pane.filter === "all" || pane.filter === "unknown";
-
   const chips = [["all", "전체"], ["dual", "의심만"], ["multi", "부캐 있는 계정"]];
-  if (other && focus.size) chips.splice(1, 0, ["focus", "찾는 계정"]);
   if (s.activity_on) chips.push(["stale", "성장 없음·미접속"]);
   chips.push(["unknown", "판별 불가"]);
   const deep = (s.deep_guilds || []);
 
   box.innerHTML = `
-    ${focusHtml}
     <div class="res-head">
       <div><h2>${esc(g.name)}<small>${esc(g.world)}${g.level ? ` · Lv.${g.level}` : ""}</small></h2>
         <div class="meta">${g.fresh ? "최신 정보로 갱신해서 봤어요" : `${esc(g.date)} 데이터 기준`} · 유니온 대표는 ${esc(g.date)} 랭킹 기준 · 길드 마스터 ${esc(g.master || "?")} · ${esc(cur.created_at.replace("T", " "))}</div></div>
-      <div class="meta">${other ? "" : `역방향: ${revTxt}${s.other_guilds ? ` · 다른 길드 ${s.other_guilds}개(${(s.other_members || 0).toLocaleString()}명) 확인` : ""}<br>`}
+      <div class="meta">역방향: ${revTxt}${s.other_guilds ? ` · 다른 길드 ${s.other_guilds}개(${(s.other_members || 0).toLocaleString()}명) 확인` : ""}<br>
         ${deep.length ? `심층 확인한 의심 길드: ${deep.map(esc).join(", ")}<br>` : ""}
         넥슨 API ${s.api_calls.toLocaleString()}번 · 캐시 ${s.cache_hits.toLocaleString()}번 · ${s.seconds}초</div>
     </div>
     <div class="tiles">
       <div class="card tile dual"><div class="label">의심 계정</div><div class="value">${s.dual}</div>
         <div class="sub">본캐 다른 길드 ${s.forward} · 부캐 다른 길드 ${s.reverse}</div></div>
-      <div class="card tile caught"><div class="label">포착 / 갱신 필요</div><div class="value">${s.confirmed ?? 0}<small> / ${s.stale ?? 0}</small></div>
+      <div class="card tile caught"><div class="label">포착 / 나간 것으로 보임</div><div class="value">${s.confirmed ?? 0}<small> / ${s.stale ?? 0}</small></div>
         <div class="sub">다른 길드 목록과 대조</div></div>
-      <div class="card tile real"><div class="label">실질 ${other ? "인원" : "길드원"} (계정)</div><div class="value">${s.accounts}</div>
+      <div class="card tile real"><div class="label">실질 길드원 (계정)</div><div class="value">${s.accounts}</div>
         <div class="sub">부캐 있는 계정 ${s.multi}</div></div>
       <div class="card tile chars"><div class="label">캐릭터 수</div><div class="value">${s.characters}</div>
         <div class="sub">길드 목록 기준</div></div>
@@ -474,26 +449,83 @@ function renderPane(mode) {
       <div class="chips">${chips.map(([k, t]) => `<button type="button" data-f="${k}" class="${pane.filter === k ? "on" : ""}">${t}</button>`).join("")}</div>
       <input data-search placeholder="캐릭터·길드 이름 찾기" value="${esc(pane.query)}">
     </div>
+    <div data-list></div>`;
+
+  box.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => {
+    pane.filter = b.dataset.f;
+    box.querySelectorAll("[data-f]").forEach((x) => x.classList.toggle("on", x === b));
+    renderList(mode);
+  }));
+  // 입력칸은 다시 만들지 않는다 (다시 만들면 한글 조합이 끊겨 'ㅁㅜㄴㅣ'처럼 써짐)
+  box.querySelector("[data-search]").addEventListener("input", (e) => {
+    pane.query = e.target.value.trim();
+    renderList(mode);
+  });
+  renderList(mode);
+}
+
+function renderList(mode) {
+  const pane = panes[mode];
+  const res = pane.data.result, s = res.summary, g = res.guild;
+  const ctx = { world: g.world, focus: new Set(), other: false };
+  const dual = res.accounts.filter((a) => a.dual && matches(a, pane));
+  const normal = res.accounts.filter((a) => !a.dual && matches(a, pane));
+  const unk = res.unknown.filter((u) => !pane.query || u.name.toLowerCase().includes(pane.query.toLowerCase()));
+  const showUnk = pane.filter === "all" || pane.filter === "unknown";
+  $(pane.box).querySelector("[data-list]").innerHTML = `
     ${pane.filter !== "unknown" ? `
       <div class="sec-title dual"><h3>의심</h3><span class="count">${dual.length}</span></div>
       ${dual.length ? `<div class="acc-grid">${dual.map((a) => accCard(a, ctx)).join("")}</div>` : `<div class="empty">${s.dual ? "조건에 맞는 계정이 없어요" : "의심되는 계정이 없어요"}</div>`}
       ${pane.filter !== "dual" ? `
-        <div class="sec-title"><h3>실질 ${other ? "인원" : "길드원"}</h3><span class="count">${normal.length}</span><span class="muted">대표 캐릭터 기준으로 묶은 계정</span></div>
+        <div class="sec-title"><h3>실질 길드원</h3><span class="count">${normal.length}</span><span class="muted">대표 캐릭터 기준으로 묶은 계정</span></div>
         ${normal.length ? `<div class="acc-grid">${normal.map((a) => accCard(a, ctx)).join("")}</div>` : `<div class="empty">조건에 맞는 계정이 없어요</div>`}` : ""}` : ""}
     ${showUnk ? `
       <div class="sec-title"><h3>판별 불가</h3><span class="count">${unk.length}</span><span class="muted">어느 계정인지 알 수 없어서 따로 모았어요</span></div>
       ${unk.length ? `<div class="unk-grid">${unk.map((u) => `<div class="ch">${avatar(u, "sm")}<div class="t"><b>${esc(u.name)}</b>
         <span>${esc(u.reason)}${u.level ? ` · Lv.${u.level}` : ""}</span></div>
         <a class="lnk tiny" href="${meaegiChar(u.name)}" target="_blank" rel="noopener">메애기</a></div>`).join("")}</div>` : `<div class="empty">없어요</div>`}` : ""}`;
+}
 
-  box.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => { pane.filter = b.dataset.f; renderPane(mode); }));
-  const si = box.querySelector("[data-search]");
-  si.oninput = () => {
-    pane.query = si.value.trim();
-    const pos = si.selectionStart;
-    renderPane(mode);
-    const n = $(pane.box).querySelector("[data-search]"); n.focus(); n.setSelectionRange(pos, pos);
+// ── 길드 검색 결과: 길드원 캐릭터 조회만 (의심 판정 없음) ──
+function renderGuild(res) {
+  const g = res.guild, s = res.summary;
+  const focus = $("#gFocus").value.split(",").map((x) => x.trim()).filter(Boolean);
+  const byName = new Map(res.members.map((m) => [m.name, m]));
+  const focusHtml = focus.map((f) => {
+    const m = byName.get(f);
+    return m
+      ? `<div class="verdict bad">「${esc(f)}」 이 길드 길드원 목록에 있어요<span>Lv.${m.level ?? "?"} ${esc(m.job || "")}</span></div>`
+      : `<div class="verdict ok">「${esc(f)}」 이 길드 길드원 목록에 없어요
+          <span>캐릭터 정보에 이 길드로 나와도 목록에 없으면 이미 나간 것으로 보면 돼요.</span></div>`;
+  }).join("");
+  const card = (m) => {
+    const hl = focus.includes(m.name);
+    const note = !m.found ? "캐릭터를 찾을 수 없음 (개명?)"
+      : m.guild !== g.name ? `캐릭터 정보엔 ${m.guild ? `「${esc(m.guild)}」` : "길드 없음"} (정보가 옛날 것)` : esc(lvjob(m));
+    return `<div class="ch member ${hl ? "focus" : ""}" data-name="${esc(m.name.toLowerCase())}">${avatar(m, "sm")}
+      <div class="t"><b>${esc(m.name)}</b><span>${m.found && m.guild === g.name ? note : `${m.level ? `Lv.${m.level} · ` : ""}${note}`}</span></div>
+      ${m.away7 ? `<span class="badge sky">7일 미접속</span>` : ""}
+      <a class="lnk tiny" href="${meaegiChar(m.name)}" target="_blank" rel="noopener">메애기</a></div>`;
   };
+  $("#guildResult").innerHTML = `
+    ${focusHtml}
+    <div class="res-head">
+      <div><h2>${esc(g.name)}<small>${esc(g.world)}${g.level ? ` · Lv.${g.level}` : ""}</small></h2>
+        <div class="meta">최신 길드원 목록 · 길드 마스터 ${esc(g.master || "?")} · 길드원 ${s.characters}명</div></div>
+      <div class="meta"><a class="lnk" href="${meaegiGuild(g.name, g.world)}" target="_blank" rel="noopener">메애기에서 보기</a><br>
+        넥슨 API ${s.api_calls.toLocaleString()}번 · ${s.seconds}초</div>
+    </div>
+    <div class="toolbar"><input data-gsearch placeholder="캐릭터 이름 찾기"><span class="muted small" data-gcount>${s.characters}명</span></div>
+    <div class="unk-grid member-grid">${res.members.map(card).join("")}</div>`;
+  const items = [...$("#guildResult").querySelectorAll(".member")];
+  // 입력칸은 그대로 두고 카드만 숨김 → 한글 조합이 안 끊김
+  $("#guildResult").querySelector("[data-gsearch]").addEventListener("input", (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    let n = 0;
+    for (const el of items) { el.hidden = !!q && !el.dataset.name.includes(q); if (!el.hidden) n++; }
+    $("#guildResult").querySelector("[data-gcount]").textContent = `${n}명`;
+  });
+  $("#guildResult").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function welcome() {
@@ -534,7 +566,7 @@ async function loadHistory() {
   box.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
     if (!confirm("이 검색 기록을 지울까요?")) return;
     await api(`/api/scans/${b.dataset.del}`, { method: "DELETE" });
-    for (const m of ["ours", "other"]) {
+    for (const m of ["ours"]) {
       if (panes[m].data && String(panes[m].data.id) === b.dataset.del) { panes[m].data = null; renderPane(m); }
     }
     loadHistory();
@@ -695,7 +727,8 @@ function lookupCard(r, ours) {
   const c = r.char, p = r.rep;
   const g = (x) => (x ? `「${esc(x)}」` : "길드 없음");
   const badges = [];
-  if (r.other_guild) badges.push(`<span class="badge dual">다른 길드 ${g(c.guild)}</span>`);
+  if (r.left_guild) badges.push(`<span class="badge gold">${g(c.guild)} 나간 것으로 보임</span>`);
+  else if (r.other_guild) badges.push(`<span class="badge dual">다른 길드 ${g(c.guild)}</span>`);
   else if (ours && c.guild === ours) badges.push(`<span class="badge ok">우리 길드</span>`);
   if (!p) badges.push(`<span class="badge gold">${esc(r.reason || "대표 캐릭터를 알 수 없음")}</span>`);
   else if (r.is_rep) badges.push(`<span class="badge ok">이 캐릭터가 대표(본캐)</span>`);
@@ -709,12 +742,12 @@ function lookupCard(r, ours) {
   if (r.dual && !why.length) why.push(`이 캐릭터는 ${g(c.guild)}, 대표(본캐)는 ${g(p.guild)}`);
   // 대조 결과 + 길드 검색·메애기 링크
   const focus = p ? p.name : c.name;
-  let checks = (r.checks || []).map((k) => checkLine(k, k.who) + suspectLinks(k.who, k.guild, r.world, focus)).join("");
+  let checks = (r.checks || []).map((k) => checkLine(k, k.who) + suspectLinks(k.who, k.guild, r.world, k.who)).join("");
   if (!r.fresh && !checks) checks = `<div class="check gray"><b>최신 정보 없음</b> <span>메애기에서 직접 확인해 주세요</span></div>${suspectLinks(c.name, "", r.world)}`;
   return `<article class="acc ${r.dual ? "is-dual" : ""}">
     ${r.dual ? `<div class="flag">의심 <span>— ${why.join(" · ")}</span></div>` : ""}
     <div class="main">${avatar(c)}
-      <div class="who"><div class="sub">${esc(r.world)} · ${g(c.guild)}</div><div class="name">${esc(c.name)}</div>
+      <div class="who"><div class="sub">${esc(r.world)} · ${r.left_guild ? `${g(c.guild)} <span class="muted">(그 길드 목록엔 없음)</span>` : g(c.guild)}</div><div class="name">${esc(c.name)}</div>
         <div class="sub">${esc(lvjob(c))}</div><div class="badges">${badges.join("")}</div></div></div>
     ${checks ? `<div class="checks">${checks}</div>` : ""}
     ${p && !r.is_rep ? `<div class="alts"><div class="ttl">유니온 대표 캐릭터</div>
@@ -727,12 +760,16 @@ function renderLookup(res) {
   const bad = res.results.filter((r) => r.dual);
   let v = "";
   if (bad.length) {
-    v = `<div class="verdict bad">다른 길드에 있는 캐릭터 ${bad.length}명 — 포착 ${s.confirmed} · 정보 갱신 필요 ${s.stale}
+    v = `<div class="verdict bad">다른 길드에 있는 캐릭터 ${bad.length}명${s.confirmed ? ` — 그 길드 목록에서 확인(포착) ${s.confirmed}` : ""}
       <span>${bad.map((r) => `${esc(r.char.name)} → ${esc(r.other_guild ? r.char.guild : r.rep?.guild)}`).join(" · ")}</span></div>`;
-    if (s.stale) v += `<div class="verdict warn">정보 갱신이 필요한 캐릭터가 있어요
-      <span>캐릭터 정보엔 다른 길드로 나오는데 그 길드 목록엔 없어요. 신청자에게 해당 캐릭터로 한 번 접속해서 정보를 갱신해 달라고 한 뒤 다시 조회해 주세요.</span></div>`;
   } else if (!s.not_found && !s.unknown_rep) {
     v = `<div class="verdict ok">✓ ${ours ? `「${esc(ours)}」 말고 다른 길드에 있는 캐릭터 없음` : "다른 길드 없음"}</div>`;
+  }
+  if (s.stale) {
+    const left = res.results.filter((r) => (r.checks || []).some((k) => k.status === "stale"))
+      .flatMap((r) => r.checks.filter((k) => k.status === "stale").map((k) => `${esc(k.who)} (${esc(k.guild)})`));
+    v += `<div class="verdict warn">이미 나간 것으로 보이는 캐릭터 ${s.stale}명 — 의심에서 뺐어요
+      <span>${[...new Set(left)].join(" · ")} — 캐릭터 정보엔 그 길드로 나오지만 길드원 목록엔 없어요. 확실히 하려면 그 캐릭터로 한 번 접속해 달라고 해 주세요(접속하면 정보가 갱신돼요).</span></div>`;
   }
   const autofix = res.results.filter((r) => !r.found && r.suggest && r.suggest.filter((x) => x.same_account).length === 1)
     .map((r) => [r.name, r.suggest.find((x) => x.same_account).name]);

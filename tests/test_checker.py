@@ -74,6 +74,9 @@ check(acc(res, "잠수F")["stale30"] is True and acc(res, "잠수F")["rep"]["awa
 check(acc(res, "본캐A")["stale30"] is False, "A: 성장 있음")
 check(acc(res, "메이플러03")["forward"] and acc(res, "메이플러03")["check"]["status"] == "confirmed", "메이플러03: 본캐가 세번째길드 → 포착")
 check(s["confirmed"] >= 3, f"포착 {s['confirmed']}건")
+t = acc(res, "나간대표T")
+check(not t["dual"] and t["left_guild"] == "세번째길드" and t["check"]["status"] == "stale",
+      "T: 대표 정보엔 세번째길드인데 그 길드 목록엔 없음 → 나간 것으로 보고 의심에서 뺌")
 check(max_repeat("id") == 1, "/id: 같은 이름은 한 번만")
 check(max_repeat("ranking/union") <= 2, "유니온 랭킹: ocid마다 한 번 (429 재시도만 한 번 더)")
 check(max_repeat("character/basic") == 1, "character/basic: 같은 캐릭터·날짜는 한 번만")
@@ -138,9 +141,19 @@ check(r["results"][0]["rep_other_guild"] and not r["results"][0]["other_guild"],
 r = checker.lookup(nexon.Client("test-key"), store, ["갱신필요S", "갱신필요S부", "남의본캐B"], "단풍잎")
 by = {x["name"]: x for x in r["results"]}
 check(by["갱신필요S부"]["checks"] == [{"who": "갱신필요S부", "guild": "세번째길드", "status": "stale"}],
-      "정보엔 세번째길드인데 그 길드 목록엔 없음 → 정보 갱신 필요(접속 요청)")
+      "정보엔 세번째길드인데 그 길드 목록엔 없음 → stale")
+check(not by["갱신필요S부"]["dual"] and by["갱신필요S부"]["left_guild"] == "세번째길드",
+      "stale이면 나간 것으로 보고 의심에서 뺌 (길드 목록을 더 믿음)")
 check(by["남의본캐B"]["checks"][0]["status"] == "confirmed", "남의본캐B: 다른길드 목록에도 있음 → 포착")
 check(by["갱신필요S"]["fresh"] and r["summary"]["stale"] == 1 and r["summary"]["confirmed"] == 1, "최신 정보로 조회, 포착 1 · 갱신 필요 1")
+
+print("7-1) 길드 검색 (길드원 조회만)")
+mock_nexon.calls.clear()
+v = checker.Scanner(nexon.Client("test-key"), store, checker.Job("g", "스카니아", "세번째길드"), "스카니아", "세번째길드").members_view()
+names = [m["name"] for m in v["members"]]
+check(set(names) == set(mock_nexon.GUILD_MEMBERS["세번째길드"]), "길드원 목록 그대로 (목록에 없는 나간대표T·갱신필요S부는 안 나옴)")
+check("ranking/union" not in mock_nexon.calls, "의심 판정 안 함 (유니온 조회 없음)")
+check(all(m["fresh"] for m in v["members"]), "길드원 정보는 최신으로")
 
 print("7-2) 잘못 읽은 이름 바로잡기 제안")
 v = checker.hangul_variants("쨋뀨유논7")
