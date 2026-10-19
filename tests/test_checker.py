@@ -147,6 +147,12 @@ check(not by["갱신필요S부"]["dual"] and by["갱신필요S부"]["left_guild"
 check(by["남의본캐B"]["checks"][0]["status"] == "confirmed", "남의본캐B: 다른길드 목록에도 있음 → 포착")
 check(by["갱신필요S"]["fresh"] and r["summary"]["stale"] == 1 and r["summary"]["confirmed"] == 1, "최신 정보로 조회, 포착 1 · 갱신 필요 1")
 
+r = checker.lookup(nexon.Client("test-key"), store, ["본캐A", "새부캐N"], "단풍잎")
+by = {x["name"]: x for x in r["results"]}
+check(by["본캐A"]["found"] and by["새부캐N"]["found"] and not by["새부캐N"]["rep"],
+      "오늘 만든 캐릭터(어제 날짜로 400) 하나 때문에 전체 조회가 멈추지 않음")
+check(by["새부캐N"]["reason"] and "새로" in by["새부캐N"]["reason"], "새 캐릭터는 이유를 알려 줌")
+
 print("7-1) 길드 검색 (길드원 조회만)")
 mock_nexon.calls.clear()
 v = checker.Scanner(nexon.Client("test-key"), store, checker.Job("g", "스카니아", "세번째길드"), "스카니아", "세번째길드").members_view()

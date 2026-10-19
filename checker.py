@@ -182,7 +182,15 @@ class Scanner:
                 return self._once(("rep", oc, w), lambda: self._cached(
                     lambda: self.db.get_rep(oc, w), lambda v: self.db.put_rep(oc, w, v), api))
 
-            oc, rep = self._with_ocid(name, fetch_rep)
+            if not w:
+                return {"ocid": None, "rep": None, "reason": "월드를 몰라서 대표 캐릭터를 못 찾음"}
+            try:
+                oc, rep = self._with_ocid(name, fetch_rep)
+            except NexonError as e:
+                if e.status != 400:
+                    raise
+                # 오늘 새로 만든 캐릭터는 어제 날짜 유니온 랭킹에 ocid가 없어서 400이 난다
+                return {"ocid": None, "rep": None, "reason": "새로 만든 캐릭터라 아직 유니온 정보가 없음 (내일 다시 확인)"}
             if not oc:
                 return {"ocid": None, "rep": None, "reason": "캐릭터를 찾을 수 없음 (개명·삭제?)"}
             if not rep:
@@ -221,7 +229,12 @@ class Scanner:
             got = None
         if got:
             return {**got, "fresh": True}
-        return self.info(name, self.date)
+        try:
+            return self.info(name, self.date)
+        except NexonError as e:
+            if e.status != 400:
+                raise
+            return None
 
     # ── 길드 단위 ──
 
@@ -475,7 +488,16 @@ def lookup(client, store, names, our_guild=""):
             "fresh": bool(info.get("fresh")),
         }
 
-    out = sc._pmap(one, names)
+    def safe(name):
+        # 이름 하나가 넥슨에서 400이 나도 나머지 이름은 계속 조회한다
+        try:
+            return one(name)
+        except NexonError as e:
+            if e.status != 400:
+                raise
+            return {"name": name, "found": False, "error": True, "reason": f"넥슨 조회 실패 ({e})"}
+
+    out = sc._pmap(safe, names)
 
     # 계정 묶기: 대표(+월드)가 같은 것끼리
     by_rep = {}
@@ -558,7 +580,7 @@ def hangul_variants(name):
 
 def suggest_fixes(sc, out, by_rep):
     """없는 이름마다 비슷한 진짜 캐릭터를 찾아 r['suggest']에 넣는다. 같은 계정이면 same_account=True."""
-    missing = [r for r in out if not r["found"]]
+    missing = [r for r in out if not r["found"] and not r.get("error")]
     if not missing:
         return
     # 이 목록의 주 계정 = 캐릭터가 가장 많이 묶인 대표

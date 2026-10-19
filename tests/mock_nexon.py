@@ -54,6 +54,9 @@ add("췐부", "Z", "세번째길드", 230); ACCOUNT_REP["Z"] = "췐부"
 add("갱신필요S", "S", "", 270); add("갱신필요S부", "S", "세번째길드", 230, listed=False); ACCOUNT_REP["S"] = "갱신필요S"
 # T: 우리 길드원 — 대표 정보엔 '세번째길드'지만 그 길드 목록엔 없음 (강퇴·탈퇴 후 접속 안 함 → 이미 나간 것)
 add("나간대표T", "T", "세번째길드", 275, listed=False); add("부캐T1", "T", OUR, 240); ACCOUNT_REP["T"] = "나간대표T"
+# N: 오늘 새로 만든 부캐 — 최신 정보는 나오지만 어제 날짜로는 캐릭터·유니온 둘 다 400 (그날엔 없던 ocid)
+add("새부캐N", "A", "", 30)
+NEW = {"새부캐N"}
 # 길드 목록에는 있는데 개명해서 /id가 안 되는 캐릭터
 GUILD_MEMBERS[OUR].append("개명한캐릭")
 # 세번째길드: 우리와 관계없는 사람들
@@ -128,8 +131,8 @@ def union():
     count("ranking/union")
     oc = request.args.get("ocid")
     name = BY_OCID.get(oc)
-    if not name:
-        return bad()
+    if not name or name in NEW:
+        return bad("Please input valid parameter")
     with calls_lock:
         if f"union:{name}" in fail_once:
             fail_once.discard(f"union:{name}")
@@ -146,8 +149,8 @@ def union():
 def basic():
     count("character/basic")
     name = BY_OCID.get(request.args.get("ocid"))
-    if not name:
-        return bad()
+    if not name or (name in NEW and request.args.get("date")):
+        return bad("Please input valid parameter")
     c = CHARS[name]
     old = request.args.get("date", "9999") < (date.today() - timedelta(days=15)).isoformat()  # 30일 전 조회
     lv, exp = c["level"], c["exp"]
