@@ -86,6 +86,11 @@ nav a { padding: 7px 15px; border-radius: 999px; font-weight: 700; color: var(--
 nav a:hover { color: var(--text); background: var(--accent-soft); }
 nav a.on { background: var(--accent); color: var(--accent-ink); }
 .theme-btn { border-radius: 999px; padding: 7px 13px; font-weight: 700; }
+/* 위쪽 버전 표시 (누르면 업데이트 내역) — 새 버전이면 점 */
+.ver-chip { position: relative; font-size: 12px; font-weight: 800; color: var(--muted); padding: 5px 11px;
+  border: 1px solid var(--line); border-radius: 999px; text-decoration: none; }
+.ver-chip:hover { color: var(--accent); border-color: var(--accent); }
+.ver-chip .new-dot { position: absolute; top: -2px; right: -2px; width: 9px; height: 9px; border-radius: 50%; background: var(--dual); }
 
 main { padding: 22px 24px 80px; }
 h2 { margin: 0 0 14px; font-size: 22px; font-weight: 800; letter-spacing: -.5px; }
@@ -398,3 +403,27 @@ code { background: var(--panel-2); border: 1px solid var(--line); border-radius:
 .member-grid .ch { padding: 8px; gap: 8px; }
 .member-grid .ch .badge { flex: none; }
 .ch.member.focus { border: 2px solid var(--dual); background: var(--dual-soft); }
+
+/* ── 업데이트 내역 */
+.cl-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.cl-title { margin: 0; font-family: "Maplestory", "Pretendard Variable", Pretendard, sans-serif; font-size: 20px; color: var(--accent); }
+.cl-sub { margin: 14px 0 4px; font-size: 14px; }
+.cl-list { margin: 8px 0 0; padding-left: 20px; line-height: 1.75; }
+.cl-list li + li { margin-top: 2px; }
+.cl-ver code, #clBox code { font-size: 12px; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }
+.sec-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+#clBox { margin-top: 14px; }
+.cl-admin { display: grid; gap: 12px; margin-top: 12px; }
+.cl-item { padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-2); }
+.cl-item-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cl-item-head .cl-title { font-size: 16px; }
+.cl-item-head .sp { flex: 1; }
+.cl-item-head input[type=date] { width: auto; padding: 5px 9px; }
+.cl-item textarea { margin-top: 8px; line-height: 1.6; font-size: 13px; background: var(--panel); }
+.cl-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-top: 8px; }
+.cl-actions button { padding: 6px 12px; font-size: 13px; }
+.cl-preview { margin-top: 10px; }
+@media (max-width: 640px) {
+  .ver-chip { order: 2; }
+  .cl-actions button { flex: 1 1 auto; }
+}

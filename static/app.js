@@ -65,7 +65,7 @@ function checkLine(c, name) {
 }
 
 // ── 화면 전환 ──
-const VIEWS = ["members", "chars", "guild", "settings"];
+const VIEWS = ["members", "chars", "guild", "settings", "changelog"];
 const OLD = { "#check": "members", "#history": "members", "#lookup": "chars" };
 function route() {
   const [h, q] = location.hash.split("?");
@@ -76,6 +76,7 @@ function showView() {
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.view === view));
   for (const v of VIEWS) $("#view-" + v).hidden = v !== view;
   if (view === "members") loadHistory();
+  if (view === "changelog") loadChangelog();
   if (view === "guild" && params.get("g")) {
     // 의심 결과의 링크로 들어옴 → 채우고 바로 검색
     if (params.get("w")) $("#gWorld").value = params.get("w");
@@ -136,6 +137,8 @@ function paintAccount() {
     ? "이 설정은 <b>내 계정에만</b> 저장돼요(다른 운영진은 각자 넣어요). 키는 화면에 앞뒤 몇 글자만 보여줘요."
     : "설정은 서버의 <code>data/guild.db</code>에 저장돼서 다음에도 그대로 유지돼요. 키는 화면에 앞뒤 몇 글자만 보여줘요. 이 파일엔 키가 들어 있으니 남에게 주지 마세요.";
   if (shared && me.user?.is_admin) loadUsers();
+  $("#clBox").hidden = !me.user?.is_admin;  // 혼자 쓰기면 나, 같이 쓰기면 관리자
+  if (me.user?.is_admin) loadClAdmin();
 }
 async function loadUsers() {
   const list = await api("/api/users").catch(() => []);
@@ -182,6 +185,112 @@ $("#logoutBtn").onclick = async () => {
   location.href = "/";
 };
 $("#toShared").onclick = () => { if (confirm("다른 사람과 같이 쓰기로 바꿀까요? 관리자 계정을 만들면 모두 로그인해야 해요.")) showGate("admin"); };
+
+// ── 업데이트 내역 ──
+const postMd = (p) => `## ${p.version} — ${p.date || ""}\n${p.body || ""}`;
+// CHANGELOG.md 모양을 화면용으로 (## 버전, ### 소제목, - 목록, **굵게**, `코드`)
+function mdToHtml(md) {
+  const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`(.+?)`/g, "<code>$1</code>");
+  let html = "", inList = false, open = false;
+  const closeList = () => { if (inList) { html += "</ul>"; inList = false; } };
+  for (const raw of md.replace(/<!--[\s\S]*?-->/g, "").split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (line.startsWith("# ")) continue;
+    if (line.startsWith("## ")) {
+      closeList();
+      if (open) html += "</section>";
+      const [ver, ...rest] = line.slice(3).split(" — ");
+      html += `<section class="card cl-ver"><div class="cl-head"><h3 class="cl-title">${inline(ver)}</h3><span class="muted small">${inline(rest.join(" — "))}</span></div>`;
+      open = true;
+    } else if (line.startsWith("### ")) {
+      closeList();
+      html += `<h4 class="cl-sub">${inline(line.slice(4))}</h4>`;
+    } else if (line.startsWith("- ")) {
+      if (!inList) { html += `<ul class="cl-list">`; inList = true; }
+      html += `<li>${inline(line.slice(2))}</li>`;
+    } else if (line.trim()) {
+      closeList();
+      html += `<p>${inline(line)}</p>`;
+    }
+  }
+  closeList();
+  if (open) html += "</section>";
+  return html;
+}
+// 위쪽 버전 표시 + 아직 안 본 새 버전이면 점
+async function markNewVersion() {
+  const r = await fetch("/api/version").then((x) => x.json()).catch(() => ({ version: "", posts: [] }));
+  $("#verChip").hidden = !r.version;
+  $("#verText").textContent = r.version;
+  $("#verChip .new-dot").hidden = !r.version || store.get("gc_seen_version") === r.version;
+  return r;
+}
+async function loadChangelog() {
+  const r = await markNewVersion();
+  $("#clPosts").innerHTML = r.posts?.length ? r.posts.map((p) => mdToHtml(postMd(p))).join("")
+    : `<div class="empty">아직 올라온 업데이트 내역이 없어요</div>`;
+  if (r.version) { store.set("gc_seen_version", r.version); $("#verChip .new-dot").hidden = true; }
+}
+const CL_STATUS = { draft: ["초안", "gray"], saved: ["저장만 함", "gold"], published: ["게시 중", "ok"], hidden: ["숨김", "dual"] };
+let clItems = [];
+async function loadClAdmin() {
+  try { paintClAdmin(await api("/api/changelog")); }
+  catch (err) { $("#clAdmin").innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
+}
+function paintClAdmin(items) {
+  clItems = items;
+  $("#clAdmin").innerHTML = items.map((it) => {
+    const cur = it.post || it.draft || {};
+    const [label, cls] = CL_STATUS[it.status];
+    return `<div class="cl-item" data-v="${esc(it.version)}">
+      <div class="cl-item-head"><b class="cl-title">${esc(it.version)}</b><span class="badge ${cls}">${label}</span>
+        ${it.post && it.draft && it.post.body !== it.draft.body ? `<span class="muted small">초안과 문구 다름</span>` : ""}
+        <span class="sp"></span><input type="date" data-k="date" value="${esc((cur.date || "").slice(0, 10))}"></div>
+      <textarea data-k="body" rows="${Math.min(10, (cur.body || "").split("\n").length + 1)}">${esc(cur.body || "")}</textarea>
+      <div class="cl-actions">
+        ${it.draft ? `<button type="button" class="ghost" data-act="load">초안 다시 불러오기</button>` : ""}
+        <button type="button" class="ghost" data-act="preview">미리보기</button>
+        <button type="button" class="ghost" data-act="save">저장 (게시 안 함)</button>
+        ${it.status === "published" ? `<button type="button" data-act="hide">숨기기</button>`
+          : `<button type="button" class="primary" data-act="publish">${it.status === "hidden" ? "다시 보이기" : "게시"}</button>`}
+        ${it.post ? `<button type="button" class="danger" data-act="del">게시 취소·문구 삭제</button>` : ""}</div>
+      <div class="cl-preview" hidden></div></div>`;
+  }).join("") || `<div class="empty">초안이 없어요</div>`;
+}
+$("#clAdmin").onclick = async (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  const box = b.closest(".cl-item"), v = box.dataset.v, it = clItems.find((x) => x.version === v);
+  const body = box.querySelector("[data-k=body]").value, date = box.querySelector("[data-k=date]").value;
+  const url = `/api/changelog/${encodeURIComponent(v)}`;
+  const put = async (extra, msg) => {
+    try { paintClAdmin(await api(url, { method: "PUT", body: JSON.stringify({ body, date, ...extra }) })); toast(msg); markNewVersion(); }
+    catch (err) { toast(err.message, true); }
+  };
+  const act = b.dataset.act;
+  if (act === "load") {
+    box.querySelector("[data-k=body]").value = it.draft.body;
+    box.querySelector("[data-k=date]").value = (it.draft.date || "").slice(0, 10);
+    toast("초안을 불러왔어요 (아직 저장 안 됨)");
+  }
+  if (act === "preview") {
+    const pv = box.querySelector(".cl-preview");
+    pv.hidden = !pv.hidden;
+    pv.innerHTML = mdToHtml(postMd({ version: v, date, body }));
+  }
+  if (act === "save") put({}, "저장했어요");
+  if (act === "publish") put({ published: 1, hidden: 0 }, `${v} 게시했어요`);
+  if (act === "hide") put({ hidden: 1 }, `${v} 숨겼어요`);
+  if (act === "del" && confirm(`${v}의 게시와 고친 문구를 지울까요? (초안은 남아요)`)) {
+    try { paintClAdmin(await api(url, { method: "DELETE" })); markNewVersion(); } catch (err) { toast(err.message, true); }
+  }
+};
+$("#clNew").onclick = async () => {
+  const v = (prompt("새 버전 이름 (예: v1.3)") || "").trim();
+  if (!v) return;
+  try { paintClAdmin(await api(`/api/changelog/${encodeURIComponent(v)}`, { method: "PUT", body: JSON.stringify({ body: "- " }) })); }
+  catch (err) { toast(err.message, true); }
+};
 
 // ── 처음 화면 (사용 방식 고르기 / 관리자 만들기 / 로그인) ──
 function showGate(step) {
@@ -815,6 +924,7 @@ function applyFixes(pairs) {
 const lastKey = () => `gc_last_scan_${me.user?.id ?? 0}`;
 let started = false;
 async function boot() {
+  markNewVersion();
   me = await fetch("/api/status").then((r) => r.json()).catch(() => ({ mode: null, user: null }));
   if (!me.mode) return showGate("choose");
   if (!me.user) return showGate("login");

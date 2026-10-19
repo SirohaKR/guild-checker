@@ -112,4 +112,32 @@ con.commit(); con.close()
 st = Store(old)
 check(st.get_settings(0) == {"guild": "옛길드"} and len(st.list_scans(0)) == 1, "예전 설정·기록이 그대로 남음")
 
+print("7) 업데이트 내역 (CHANGELOG.md 초안 → 게시한 것만 보임)")
+import changelog  # noqa: E402
+
+drafts = changelog.drafts()
+check(drafts and drafts[0]["version"] == "v1.1" and drafts[0]["body"].startswith("- "), "CHANGELOG.md 초안 읽기 (최신 먼저)")
+a, b = fresh("changelog.db")
+a.post("/api/setup", json={"mode": "shared", "username": "길마", "password": "secret1"})
+a.post("/api/users", json={"username": "부길마", "password": "pass123"})
+b.post("/api/login", json={"username": "부길마", "password": "pass123"})
+check(b.get("/api/version").json == {"version": "", "posts": []}, "게시 전엔 버전 없음")
+check(b.get("/api/changelog").status_code == 403, "운영진은 업데이트 내역 관리 못 함")
+lst = a.get("/api/changelog").json
+check(lst[0]["version"] == "v1.1" and lst[0]["status"] == "draft", "관리자: 초안이 목록에 뜸")
+a.put("/api/changelog/v1.0", json={"body": "- 첫 버전", "date": "2026-10-14", "published": 1})
+a.put("/api/changelog/v1.1", json={"body": "- 고침", "date": "2026-10-19"})
+check(b.get("/api/version").json["version"] == "v1.0", "저장만 한 v1.1은 안 보이고 게시한 v1.0만 보임")
+a.put("/api/changelog/v1.1", json={"published": 1})
+v = b.get("/api/version").json
+check(v["version"] == "v1.1" and [p["version"] for p in v["posts"]] == ["v1.1", "v1.0"], "게시하면 최신 버전으로, 최신순")
+a.put("/api/changelog/v1.1", json={"hidden": 1})
+check(b.get("/api/version").json["version"] == "v1.0", "숨기면 안 보임")
+check(a.put("/api/changelog/1.2", json={"body": "-"}).status_code == 400, "버전 형식이 틀리면 거절")
+a.delete("/api/changelog/v1.1")
+check([x["status"] for x in a.get("/api/changelog").json if x["version"] == "v1.1"] == ["draft"], "게시 취소하면 초안으로 돌아감")
+s, _ = fresh("changelog-solo.db")
+s.post("/api/setup", json={"mode": "solo"})
+check(s.get("/api/changelog").status_code == 200, "혼자 쓰기면 그 사람이 관리")
+
 print(f"\n모두 통과 ({ok}개)")

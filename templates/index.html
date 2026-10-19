@@ -25,6 +25,7 @@
     <a href="#settings" data-view="settings">설정</a>
   </nav>
   <div class="who-am-i" id="whoAmI" hidden><span id="whoName"></span><button type="button" class="ghost small" id="logoutBtn">로그아웃</button></div>
+  <a href="#changelog" class="ver-chip" id="verChip" title="업데이트 내역" hidden><span id="verText"></span><i class="new-dot" hidden></i></a>
   <button class="theme-btn" id="themeBtn" type="button" title="라이트/다크 전환"></button>
 </header>
 
@@ -172,6 +173,12 @@
     <div id="guildResult"></div>
   </section>
 
+  <!-- 업데이트 내역 (위쪽 버전 표시를 누르면) -->
+  <section id="view-changelog" hidden>
+    <h2>업데이트 내역</h2>
+    <div id="clPosts"></div>
+  </section>
+
   <!-- 설정 -->
   <section id="view-settings" hidden>
     <form id="settingsForm" class="card form-card settings">
@@ -254,6 +261,14 @@
         </form>
         <div id="userList" class="user-list"></div>
       </div>
+    </div>
+
+    <!-- 업데이트 내역 관리: 혼자 쓰기면 나, 같이 쓰기면 관리자만 -->
+    <div class="card form-card settings" id="clBox" hidden>
+      <div class="sec-row"><h3>업데이트 내역 관리</h3><button type="button" class="ghost" id="clNew">+ 새 버전 직접 쓰기</button></div>
+      <p class="hint" style="margin-top:6px">초안(<code>CHANGELOG.md</code>)을 불러와 문구를 고친 다음 <b>게시</b>한 버전만 위쪽 버전 표시에 보여요.
+        올리기 싫은 버전은 그냥 두거나, 이미 올린 건 <b>숨기기</b>. 한 줄에 하나씩 <code>- 내용</code>, 소제목은 <code>### 제목</code>, 굵게는 <code>**글자**</code>.</p>
+      <div id="clAdmin" class="cl-admin"></div>
     </div>
 
     <div class="card form-card settings" id="soloBox" hidden>

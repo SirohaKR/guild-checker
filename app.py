@@ -16,10 +16,11 @@ from functools import wraps
 from flask import Flask, jsonify, render_template, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
+import changelog
 import checker
 import nexon
 import vision
-from db import Store
+from db import Store, now
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024  # 스크린샷 여러 장
@@ -245,6 +246,57 @@ def asset_version():
 @app.get("/")
 def index():
     return render_template("index.html", worlds=checker.WORLDS, models=vision.MODELS)
+
+
+# ── 업데이트 내역 ──
+
+@app.get("/api/version")
+def version():
+    """게시한 업데이트 내역 (로그인 전에도 볼 수 있음). 맨 위 글의 버전 = 지금 버전."""
+    posts = sorted(store.published_posts(), key=lambda p: changelog.version_key(p["version"]), reverse=True)
+    return jsonify({"version": posts[0]["version"] if posts else "", "posts": posts})
+
+
+def need_editor(fn):
+    """업데이트 내역 관리: 혼자 쓰기면 그 사람, 같이 쓰기면 관리자."""
+    @wraps(fn)
+    @need_user
+    def wrapper(u, *a, **kw):
+        if not u["is_admin"]:
+            return err("관리자만 할 수 있어요.", 403)
+        return fn(u, *a, **kw)
+    return wrapper
+
+
+@app.get("/api/changelog")
+@need_editor
+def changelog_list(u):
+    return jsonify(changelog.admin_list(store))
+
+
+@app.put("/api/changelog/<version>")
+@need_editor
+def changelog_save(u, version):
+    if not changelog.VERSION_RE.match(version):
+        return err("버전은 v1.3 같은 형식으로 써 주세요.")
+    body = request.get_json(silent=True) or {}
+    row = store.changelog_posts().get(version) or {
+        "version": version, "date": now().date().isoformat(), "body": "", "published": 0, "hidden": 0}
+    for k in ("date", "body"):
+        if k in body:
+            row[k] = str(body[k] or "").strip()
+    for k in ("published", "hidden"):
+        if k in body:
+            row[k] = 1 if body[k] else 0
+    store.save_post(row)
+    return jsonify(changelog.admin_list(store))
+
+
+@app.delete("/api/changelog/<version>")
+@need_editor
+def changelog_delete(u, version):
+    store.delete_post(version)  # 게시 취소 + 고친 문구 삭제 (초안은 그대로)
+    return jsonify(changelog.admin_list(store))
 
 
 @app.get("/api/settings")

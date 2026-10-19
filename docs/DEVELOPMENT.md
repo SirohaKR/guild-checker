@@ -9,7 +9,9 @@ app.py              Flask 서버. 화면 하나(index.html)와 /api/* 를 제공
 checker.py          판별 로직. 넥슨 API를 어떤 순서로 부르고 결과를 어떻게 묶는지
 nexon.py            넥슨 Open API 클라이언트 (재시도, 오류 메시지)
 vision.py           스크린샷에서 닉네임 읽기 (Claude API)
-db.py               SQLite 저장소 (설정, 계정, 캐시, 검색 기록)
+db.py               SQLite 저장소 (설정, 계정, 캐시, 검색 기록, 업데이트 내역)
+changelog.py        업데이트 내역: CHANGELOG.md 초안 읽기, 관리 목록 만들기
+CHANGELOG.md        업데이트 내역 초안 (게시해야 화면에 보임)
 templates/index.html  페이지 뼈대 (처음 화면 + 탭 4개)
 static/app.js       화면 로직 (빌드 도구 없이 그대로 씀)
 static/style.css    스타일 (라이트/다크)
@@ -17,7 +19,7 @@ static/logo.svg     로고·파비콘
 tests/              가짜 넥슨 서버와 테스트
 ```
 
-화면은 페이지 하나에 탭을 바꿔 가며 보여 주는 방식입니다. 주소 뒤의 `#members`, `#chars`, `#guild`, `#settings` 로 탭이 정해집니다.
+화면은 페이지 하나에 탭을 바꿔 가며 보여 주는 방식입니다. 주소 뒤의 `#members`, `#chars`, `#guild`, `#settings` 로 탭이 정해집니다. 위쪽 버전 표시를 누르면 `#changelog`(업데이트 내역)로 갑니다.
 
 ## 2. 탭별 동작
 
@@ -26,7 +28,7 @@ tests/              가짜 넥슨 서버와 테스트
 | 길드원 검색 | 검색 버튼, 진행률, 결과 카드, 지난 기록 | `POST /api/scan` (mode `ours`) → 백그라운드 작업 → 1초마다 `GET /api/jobs/<id>` |
 | 캐릭터명 검색 | 스크린샷 올리기 → 닉네임 읽기 → 텍스트 상자에서 고치기 → 조회 | `POST /api/read-image`, `POST /api/lookup` (바로 응답) |
 | 길드 검색 | 아무 길드의 길드원 캐릭터 조회만 (판정 없음), 찾을 캐릭터가 목록에 있는지 | `POST /api/scan` (mode `other`) → 결과는 저장하지 않고 작업에 담아 돌려줌 |
-| 설정 | API 키, 우리 길드, 모델, 계정 관리 | `/api/settings`, `/api/users` … |
+| 설정 | API 키, 우리 길드, 모델, 계정 관리, 업데이트 내역 관리 | `/api/settings`, `/api/users`, `/api/changelog` … |
 
 의심 결과의 [길드 검색] 버튼은 `#guild?w=월드&g=길드&f=찾을캐릭터` 주소로 이동하고, 길드 검색 탭이 이 값을 채워서 바로 검색합니다.
 
@@ -117,6 +119,9 @@ tests/              가짜 넥슨 서버와 테스트
 | GET, DELETE | `/api/scans`, `/api/scans/<id>` | 지난 검색 기록 (지난번과 비교 `diff` 포함) |
 | POST | `/api/lookup` | 캐릭터명 검색 (`names`: 줄바꿈으로 구분, 최대 60명) |
 | POST | `/api/read-image` | 스크린샷 읽기 (`multipart`, `images` 여러 개) |
+| GET | `/api/version` | 게시한 업데이트 내역과 지금 버전 (로그인 없이) |
+| GET | `/api/changelog` | 초안 + 저장·게시한 글 목록 (혼자 쓰기 또는 관리자) |
+| PUT, DELETE | `/api/changelog/<버전>` | 문구·날짜 저장, `published`/`hidden` 바꾸기 / 게시 취소 |
 
 검색 작업은 계정마다 한 번에 하나만 돌 수 있습니다. 작업 상태는 메모리에만 있고 서버를 다시 켜면 사라집니다. 결과는 DB에 남습니다.
 
@@ -144,6 +149,7 @@ tests/              가짜 넥슨 서버와 테스트
 | `rep_cache` | ocid → 유니온 대표 (`REP_TTL_DAYS`, 기본 3일) |
 | `char_cache` | 날짜별 캐릭터 정보 (어제 기준·30일 전 비교용) |
 | `guild_cache`, `guild_members` | 길드 이름 → id (30일), 날짜별 길드원 목록 |
+| `changelog_posts` | 업데이트 내역: 관리자가 다듬어 저장·게시한 글 (`published`, `hidden`) |
 | `settings` | 예전 버전의 설정. 처음 실행할 때 `user_settings` 로 옮깁니다 |
 
 예전 DB를 열면 `Store._migrate` 가 필요한 칸을 추가하고 설정을 옮깁니다. 60일 넘은 날짜별 캐시는 서버를 켤 때 지웁니다.
@@ -210,3 +216,9 @@ Claude는 테스트에서 가짜 객체로 바꿔서 시험하므로 키가 필�
 - 유니온 랭킹은 하루 전 데이터라 오늘 만든 캐릭터는 판별할 수 없습니다.
 - 역방향 검색은 길드 랭킹 상위 길드만 봅니다. 그 밖의 작은 길드에 있는 부캐는 못 찾습니다.
 - 넥슨 정보는 캐릭터로 접속해야 갱신되므로, 결과는 경고로만 봐야 합니다.
+
+## 12. 업데이트 내역 올리는 법
+
+화면에 보이는 걸 바꾸면 `CHANGELOG.md` 맨 위에 `## v1.2 — 2026-10-25` 처럼 버전을 추가하고 `- ` 로 한 줄씩 적습니다.
+길드원이 읽는 글이라 쉬운 말로 짧게 씁니다. 배포한 뒤 설정 탭 → 업데이트 내역 관리에서 문구를 다듬고 [게시]하면 위쪽 버전 표시가 바뀌고, 아직 안 본 사람에게는 점이 찍힙니다.
+버전은 기능이 늘면 v1.2처럼 끝자리를, 크게 바뀌면 앞자리를 올립니다.

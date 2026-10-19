@@ -50,6 +50,12 @@ CREATE TABLE IF NOT EXISTS user_settings (   -- 계정별 설정 (API 키, 우�
     user_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT,
     PRIMARY KEY (user_id, key)
 );
+CREATE TABLE IF NOT EXISTS changelog_posts (  -- 업데이트 내역: 관리자가 다듬어서 저장·게시한 글
+    version TEXT PRIMARY KEY, date TEXT, body TEXT,
+    published INTEGER NOT NULL DEFAULT 0,      -- 1 = 게시
+    hidden INTEGER NOT NULL DEFAULT 0,         -- 1 = 게시했지만 숨김
+    updated_at TEXT
+);
 CREATE TABLE IF NOT EXISTS scans (           -- 지난 검사 결과
     id INTEGER PRIMARY KEY,
     world TEXT NOT NULL, guild TEXT NOT NULL, data_date TEXT NOT NULL,
@@ -207,6 +213,22 @@ class Store:
                 self.q("DELETE FROM user_settings WHERE user_id=? AND key=?", (uid, k))
             else:
                 self.q("INSERT OR REPLACE INTO user_settings VALUES (?,?,?)", (uid, k, v))
+
+    # ── 업데이트 내역 ──
+
+    def changelog_posts(self):
+        return {r["version"]: dict(r) for r in self.q("SELECT * FROM changelog_posts")}
+
+    def published_posts(self):
+        return [dict(r) for r in self.q("SELECT version, date, body FROM changelog_posts WHERE published=1 AND hidden=0")]
+
+    def save_post(self, row):
+        self.q("INSERT OR REPLACE INTO changelog_posts (version, date, body, published, hidden, updated_at) "
+               "VALUES (?,?,?,?,?,?)", (row["version"], row["date"], row["body"], row["published"], row["hidden"],
+                                        now().isoformat(timespec="seconds")))
+
+    def delete_post(self, version):
+        self.q("DELETE FROM changelog_posts WHERE version=?", (version,))
 
     # ── 검사 결과 ──
 
